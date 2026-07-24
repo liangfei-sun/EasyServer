@@ -1,0 +1,31 @@
+id: cloudflare-tunnel
+name: "Cloudflare Tunnel"
+version: "1.0"
+description: "通过 Cloudflare 隧道将本地服务安全发布到公网，无需公网 IP"
+category: network
+author: community
+
+depends_on: []
+soft_depends_on: []
+
+config:
+  - key: CF_TUNNEL_TOKEN
+    label: "Tunnel Token"
+    type: password
+    default: ""
+    required: true
+    description: "从 Cloudflare Dashboard 获取的隧道令牌"
+
+access:
+  subdomain: ""
+  port: 0
+  protocol: ""
+  is_proxy: false
+
+healthcheck:
+  url: ""
+  interval: 0s
+
+resources:
+  memory_limit: "128m"
+  cpu_limit: "0.5"

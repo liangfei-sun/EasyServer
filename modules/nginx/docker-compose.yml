@@ -1,0 +1,21 @@
+# EasyServer - Nginx 反向代理模块
+# 数据路径使用 ${DATA_DIR} 变量，由管理引擎注入
+
+services:
+  nginx:
+    image: nginx:stable
+    container_name: easyserver-nginx
+    network_mode: ${NGINX_NETWORK_MODE:-host}
+    volumes:
+      - ./modules/nginx/conf.d:/etc/nginx/conf.d
+      - ./modules/nginx/ssl:/etc/nginx/ssl
+      - ./modules/nginx/log:/var/log/nginx
+      - ./modules/nginx/acme-challenge:/acme-challenge
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

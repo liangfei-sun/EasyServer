@@ -1,0 +1,59 @@
+# Nginx 模块元数据
+# 此文件描述模块的所有信息，Web 界面据此动态渲染配置表单
+
+id: nginx
+name: "Nginx 反向代理"
+version: "1.0"
+description: "高性能反向代理服务器，提供 SSL 终止、域名路由、静态文件服务"
+category: infra
+author: community
+icon: nginx.svg
+
+# 依赖关系
+depends_on: []                     # 无硬依赖（nginx 是基础设施）
+soft_depends_on:
+  - acme                           # 有 acme 模块时自动配置 SSL 证书路径
+
+# 配置项（Web 界面动态渲染表单）
+config:
+  - key: NGINX_HTTP_PORT
+    label: "HTTP 监听端口"
+    type: number
+    default: 80
+    required: true
+    description: "HTTP 端口，用于 ACME 验证和跳转 HTTPS"
+  - key: NGINX_HTTPS_PORT
+    label: "HTTPS 监听端口"
+    type: number
+    default: 8443
+    required: true
+    description: "HTTPS 端口，国内运营商通常封锁 443，建议使用 8443"
+  - key: NGINX_NETWORK_MODE
+    label: "网络模式"
+    type: select
+    options:
+      - value: host
+        label: "host（直接使用主机网络，推荐）"
+      - value: bridge
+        label: "bridge（桥接网络，需手动映射端口）"
+    default: host
+    required: true
+
+# 访问配置
+access:
+  subdomain: ""                    # nginx 自身不通过子域名访问
+  port: 8443                       # HTTPS 端口
+  protocol: https
+  is_proxy: true                   # 自身是反向代理
+
+# 健康检查
+healthcheck:
+  url: "http://127.0.0.1:{NGINX_HTTP_PORT}"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+# 资源限制
+resources:
+  memory_limit: "256m"
+  cpu_limit: "1.0"

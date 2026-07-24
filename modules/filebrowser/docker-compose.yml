@@ -1,0 +1,22 @@
+# EasyServer - FileBrowser 文件管理模块
+
+services:
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: easyserver-filebrowser
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FILEBROWSER_PORT:-8081}:80"
+    volumes:
+      - ${FILEBROWSER_DATA_PATH:-./data/filebrowser/files}:/srv/data
+      - ${DATA_DIR}/filebrowser/config/filebrowser.db:/database/filebrowser.db
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

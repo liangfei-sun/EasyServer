@@ -1,0 +1,39 @@
+id: filebrowser
+name: "FileBrowser 文件管理"
+version: "1.0"
+description: "轻量级 Web 文件管理器，支持上传、下载、在线预览"
+category: files
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: FILEBROWSER_PORT
+    label: "服务端口"
+    type: number
+    default: 8081
+    required: true
+  - key: FILEBROWSER_DATA_PATH
+    label: "管理的文件目录"
+    type: string
+    default: "./data/filebrowser/files"
+    required: true
+    description: "FileBrowser 管理的文件目录路径"
+
+access:
+  subdomain: files
+  port: 8081
+  protocol: http
+
+healthcheck:
+  url: "http://127.0.0.1:{FILEBROWSER_PORT}"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "256m"
+  cpu_limit: "1.0"

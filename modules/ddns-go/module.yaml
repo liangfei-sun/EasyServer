@@ -1,0 +1,39 @@
+id: ddns-go
+name: "DDNS-Go 动态域名"
+version: "1.0"
+description: "自动更新 DNS 解析记录，支持阿里云、Cloudflare 等服务商"
+category: infra
+author: community
+
+depends_on: []
+soft_depends_on: []
+
+config:
+  - key: DDNS_GO_CHECK_INTERVAL
+    label: "IP 检测间隔（秒）"
+    type: number
+    default: 600
+    required: true
+    description: "多久检测一次 IP 变化"
+  - key: DDNS_GO_CACHE_TIMES
+    label: "缓存检测次数"
+    type: number
+    default: 12
+    required: true
+    description: "每 N 次检测才对比一次 DNS 记录，减少 API 调用"
+
+access:
+  subdomain: ""
+  port: 9876
+  protocol: http
+  is_proxy: false
+
+healthcheck:
+  url: "http://127.0.0.1:9876"
+  interval: 60s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "64m"
+  cpu_limit: "0.25"

@@ -1,0 +1,17 @@
+# EasyServer - Cloudflare Tunnel 模块
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: easyserver-cloudflared
+    network_mode: host
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

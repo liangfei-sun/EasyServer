@@ -1,0 +1,48 @@
+id: joplin
+name: "Joplin Server 笔记同步"
+version: "1.0"
+description: "Joplin 笔记同步服务器，支持多设备同步，配合 PostgreSQL 数据库"
+category: notes
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: JOPLIN_APP_PORT
+    label: "服务端口"
+    type: number
+    default: 22300
+    required: true
+  - key: JOPLIN_DB_PASSWORD
+    label: "PostgreSQL 数据库密码"
+    type: password
+    default: ""
+    required: true
+  - key: JOPLIN_DB_USER
+    label: "数据库用户名"
+    type: string
+    default: joplin_user
+    required: true
+  - key: JOPLIN_DB_NAME
+    label: "数据库名"
+    type: string
+    default: joplin_db
+    required: true
+
+access:
+  subdomain: joplin
+  port: 22300
+  protocol: http
+
+healthcheck:
+  url: "http://127.0.0.1:{JOPLIN_APP_PORT}/api/ping"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "512m"
+  cpu_limit: "1.0"

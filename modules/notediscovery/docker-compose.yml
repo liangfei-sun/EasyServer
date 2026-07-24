@@ -1,0 +1,21 @@
+# EasyServer - NoteDiscovery 笔记模块
+
+services:
+  notediscovery:
+    image: ghcr.io/gamosoft/notediscovery:latest
+    container_name: easyserver-notediscovery
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${NOTEDISCOVERY_PORT:-8000}:8000"
+    volumes:
+      - ${DATA_DIR}/notediscovery/data:/app/data
+      - ${DATA_DIR}/notediscovery/config.yaml:/app/config.yaml
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

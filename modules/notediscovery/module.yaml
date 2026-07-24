@@ -1,0 +1,49 @@
+id: notediscovery
+name: "NoteDiscovery 笔记"
+version: "1.0"
+description: "基于 Markdown 的在线笔记管理工具，支持搜索和编辑"
+category: notes
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: NOTEDISCOVERY_PORT
+    label: "服务端口"
+    type: number
+    default: 8000
+    required: true
+  - key: NOTEDISCOVERY_AUTH_ENABLED
+    label: "启用登录认证"
+    type: boolean
+    default: true
+  - key: NOTEDISCOVERY_PASSWORD
+    label: "登录密码"
+    type: password
+    default: ""
+    required: false
+    description: "启用认证时必须设置密码"
+  - key: NOTEDISCOVERY_SECRET_KEY
+    label: "会话密钥"
+    type: password
+    default: ""
+    required: false
+    description: "用于加密会话的随机字符串"
+
+access:
+  subdomain: notes
+  port: 8000
+  protocol: http
+
+healthcheck:
+  url: "http://127.0.0.1:{NOTEDISCOVERY_PORT}"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "256m"
+  cpu_limit: "1.0"

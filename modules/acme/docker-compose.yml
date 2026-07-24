@@ -1,0 +1,22 @@
+# EasyServer - ACME SSL 证书模块
+
+services:
+  acme.sh:
+    image: neilpang/acme.sh
+    container_name: easyserver-acme
+    command: daemon
+    volumes:
+      - ${DATA_DIR}/acme/data:/acme.sh
+      - ./modules/nginx/acme-challenge:/acme-challenge
+      - ./modules/nginx/ssl:/etc/nginx/ssl
+    network_mode: host
+    environment:
+      - TZ=Asia/Shanghai
+      - Ali_Key=${ACME_ALI_KEY}
+      - Ali_Secret=${ACME_ALI_SECRET}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

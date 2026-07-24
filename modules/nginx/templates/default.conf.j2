@@ -1,0 +1,18 @@
+# EasyServer - Nginx 默认配置
+# 处理 ACME 验证请求，拒绝其他未匹配的请求
+
+server {
+    listen {{ http_port }} default_server;
+    listen [::]:{{ http_port }} default_server;
+    server_name _;
+
+    # ACME HTTP-01 验证
+    location /.well-known/acme-challenge/ {
+        root /acme-challenge;
+    }
+
+    # 拒绝所有未匹配的请求
+    location / {
+        return 444;
+    }
+}

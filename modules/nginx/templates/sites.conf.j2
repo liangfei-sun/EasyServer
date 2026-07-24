@@ -1,0 +1,50 @@
+# EasyServer - Nginx 站点配置
+# 由管理引擎根据已安装模块和域名配置自动生成
+
+# HTTP 统一入口：ACME 验证 + 跳转 HTTPS
+server {
+    listen {{ http_port }};
+    listen [::]:{{ http_port }};
+    server_name {{ server_names }};
+
+    # ACME HTTP-01 验证
+    location /.well-known/acme-challenge/ {
+        root /acme-challenge;
+    }
+
+    # 强制跳转 HTTPS
+    location / {
+        return 301 https://$host:{{ https_port }}$request_uri;
+    }
+}
+
+{% for site in sites %}
+# {{ site.name }}
+server {
+    listen {{ https_port }} ssl;
+    listen [::]:{{ https_port }} ssl;
+    server_name {{ site.server_name }};
+
+    ssl_certificate /etc/nginx/ssl/{{ domain }}/fullchain.cer;
+    ssl_certificate_key /etc/nginx/ssl/{{ domain }}/{{ domain }}.key;
+    include /etc/nginx/conf.d/ssl-params.conf;
+
+    {% if site.client_max_body_size is defined %}
+    client_max_body_size {{ site.client_max_body_size }};
+    {% endif %}
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ site.backend_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        {% if site.proxy_extra %}
+        {% for key, value in site.proxy_extra.items() %}
+        {{ key }} {{ value }};
+        {% endfor %}
+        {% endif %}
+    }
+}
+
+{% endfor %}

@@ -1,0 +1,43 @@
+id: acme
+name: "ACME SSL 证书"
+version: "1.0"
+description: "使用 acme.sh 自动申请和续签 SSL 证书，支持 DNS 验证"
+category: infra
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+
+config:
+  - key: ACME_ALI_KEY
+    label: "阿里云 AccessKey"
+    type: password
+    default: ""
+    required: true
+    description: "用于 DNS 验证的阿里云 AccessKey"
+  - key: ACME_ALI_SECRET
+    label: "阿里云 AccessKey Secret"
+    type: password
+    default: ""
+    required: true
+  - key: ACME_DOMAIN
+    label: "主域名"
+    type: string
+    default: ""
+    required: true
+    description: "要申请证书的域名（如 example.com）"
+
+access:
+  subdomain: ""
+  port: 0
+  protocol: ""
+  is_proxy: false
+
+healthcheck:
+  url: ""
+  interval: 0s
+
+resources:
+  memory_limit: "64m"
+  cpu_limit: "0.25"

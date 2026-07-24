@@ -1,0 +1,35 @@
+id: uptime-kuma
+name: "Uptime Kuma 监控"
+version: "1.0"
+description: "自托管监控工具，支持 HTTP/TCP/SSL 监控和告警通知"
+category: infra
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: UPTIME_KUMA_PORT
+    label: "服务端口"
+    type: number
+    default: 3001
+    required: true
+
+access:
+  subdomain: status
+  port: 3001
+  protocol: http
+  proxy_extra:
+    proxy_http_version: "1.1"
+
+healthcheck:
+  url: "http://127.0.0.1:{UPTIME_KUMA_PORT}/api/status-page/monitoring"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "256m"
+  cpu_limit: "0.5"

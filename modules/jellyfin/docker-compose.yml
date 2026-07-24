@@ -1,0 +1,21 @@
+# EasyServer - Jellyfin 媒体服务器模块
+
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: easyserver-jellyfin
+    network_mode: ${JELLYFIN_NETWORK_MODE:-host}
+    volumes:
+      - ${DATA_DIR}/jellyfin/config:/config
+      - ${DATA_DIR}/jellyfin/cache:/cache
+      - ${DATA_DIR}/jellyfin/media:/media
+    environment:
+      - TZ=Asia/Shanghai
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

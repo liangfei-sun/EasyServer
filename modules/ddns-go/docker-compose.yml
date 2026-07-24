@@ -1,0 +1,18 @@
+# EasyServer - DDNS-Go 动态域名模块
+
+services:
+  ddns-go:
+    image: jeessy/ddns-go
+    container_name: easyserver-ddns-go
+    network_mode: host
+    volumes:
+      - ${DATA_DIR}/ddns-go/config:/root/.ddns_go_config.yaml
+    command: ["-f", "${DDNS_GO_CHECK_INTERVAL:-600}", "-cacheTimes", "${DDNS_GO_CACHE_TIMES:-12}"]
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

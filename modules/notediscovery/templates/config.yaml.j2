@@ -1,0 +1,26 @@
+# NoteDiscovery Configuration
+# 由 EasyServer 管理引擎根据用户配置自动生成
+
+app:
+  name: "NoteDiscovery"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+  allowed_origins: []
+  debug: false
+
+storage:
+  notes_dir: "./data"
+  plugins_dir: "./plugins"
+
+search:
+  enabled: true
+
+authentication:
+  enabled: {{ auth_enabled }}
+  secret_key: "{{ secret_key }}"
+  password: "{{ password }}"
+  session_max_age: 604800
+  api_key: ""

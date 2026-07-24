@@ -1,0 +1,43 @@
+id: calibre-web
+name: "Calibre-Web 电子书"
+version: "1.0"
+description: "在线电子书管理系统，支持阅读、上传、格式转换、OPDS 订阅"
+category: media
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: CALIBRE_WEB_PORT
+    label: "服务端口"
+    type: number
+    default: 8083
+    required: true
+  - key: CALIBRE_WEB_PUID
+    label: "用户 ID (PUID)"
+    type: number
+    default: 1000
+    required: true
+  - key: CALIBRE_WEB_PGID
+    label: "用户组 ID (PGID)"
+    type: number
+    default: 1000
+    required: true
+
+access:
+  subdomain: books
+  port: 8083
+  protocol: http
+
+healthcheck:
+  url: "http://127.0.0.1:{CALIBRE_WEB_PORT}"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "512m"
+  cpu_limit: "1.0"

@@ -1,0 +1,39 @@
+# EasyServer 模块注册表
+# 所有可用服务模块的分类索引
+# 新增模块时，在对应分类下添加模块 ID 即可
+
+categories:
+  - id: infra
+    name: "基础设施"
+    description: "反向代理、SSL证书、DNS、监控等基础服务"
+    modules:
+      - nginx
+      - acme
+      - ddns-go
+      - uptime-kuma
+
+  - id: notes
+    name: "笔记知识"
+    description: "笔记管理和知识发现工具"
+    modules:
+      - notediscovery
+      - joplin
+
+  - id: media
+    name: "影音阅读"
+    description: "媒体服务器和电子书管理"
+    modules:
+      - jellyfin
+      - calibre-web
+
+  - id: files
+    name: "文件管理"
+    description: "文件浏览和管理工具"
+    modules:
+      - filebrowser
+
+  - id: network
+    name: "网络穿透"
+    description: "内网穿透和隧道工具"
+    modules:
+      - cloudflare-tunnel

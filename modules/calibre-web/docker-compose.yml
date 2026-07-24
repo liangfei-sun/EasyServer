@@ -1,0 +1,23 @@
+# EasyServer - Calibre-Web 电子书模块
+
+services:
+  calibre-web:
+    image: linuxserver/calibre-web:latest
+    container_name: easyserver-calibre-web
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CALIBRE_WEB_PORT:-8083}:8083"
+    volumes:
+      - ${DATA_DIR}/calibre-web/config:/config
+      - ${DATA_DIR}/calibre-web/books:/books
+    environment:
+      - PUID=${CALIBRE_WEB_PUID:-1000}
+      - PGID=${CALIBRE_WEB_PGID:-1000}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

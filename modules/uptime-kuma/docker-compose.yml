@@ -1,0 +1,20 @@
+# EasyServer - Uptime Kuma 监控模块
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    container_name: easyserver-uptime-kuma
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${UPTIME_KUMA_PORT:-3001}:3001"
+    volumes:
+      - ${DATA_DIR}/uptime-kuma/data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

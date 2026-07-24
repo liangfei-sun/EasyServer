@@ -1,0 +1,62 @@
+# EasyServer - Joplin Server 笔记同步模块
+# 包含两个服务：PostgreSQL 数据库 + Joplin Server
+
+networks:
+  joplin-internal:
+    name: easyserver-joplin-internal
+
+services:
+  joplin-db:
+    image: postgres:16
+    container_name: easyserver-joplin-db
+    volumes:
+      - ${DATA_DIR}/joplin/postgres:/var/lib/postgresql/data
+    networks:
+      - joplin-internal
+    environment:
+      - POSTGRES_PASSWORD=${JOPLIN_DB_PASSWORD}
+      - POSTGRES_USER=${JOPLIN_DB_USER:-joplin_user}
+      - POSTGRES_DB=${JOPLIN_DB_NAME:-joplin_db}
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JOPLIN_DB_USER:-joplin_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  joplin-app:
+    image: joplin/server:latest
+    container_name: easyserver-joplin-app
+    depends_on:
+      joplin-db:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${JOPLIN_APP_PORT:-22300}:22300"
+    networks:
+      - joplin-internal
+    environment:
+      - APP_PORT=22300
+      - APP_BASE_URL=${JOPLIN_BASE_URL:-http://localhost:22300}
+      - DB_CLIENT=pg
+      - POSTGRES_PASSWORD=${JOPLIN_DB_PASSWORD}
+      - POSTGRES_DATABASE=${JOPLIN_DB_NAME:-joplin_db}
+      - POSTGRES_USER=${JOPLIN_DB_USER:-joplin_user}
+      - POSTGRES_PORT=5432
+      - POSTGRES_HOST=joplin-db
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

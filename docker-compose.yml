@@ -1,0 +1,31 @@
+# EasyServer 核心引擎
+# 仅启动管理引擎，各服务模块通过 Web UI 或 CLI 独立管理
+
+services:
+  core:
+    build:
+      context: ./core
+      dockerfile: Dockerfile
+    container_name: easyserver-core
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8900:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - .:/app:rw
+      - ${DATA_DIR:-./data}:/data
+    environment:
+      - EASYSERVER_ROOT=/app
+      - DATA_DIR=${DATA_DIR:-/app/data}
+      - TZ=Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - easyserver-proxy
+
+networks:
+  easyserver-proxy:
+    external: true

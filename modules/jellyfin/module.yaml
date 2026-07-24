@@ -1,0 +1,46 @@
+id: jellyfin
+name: "Jellyfin 媒体服务器"
+version: "1.0"
+description: "开源媒体服务器，管理视频、音乐、图片，支持多客户端"
+category: media
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: JELLYFIN_PORT
+    label: "服务端口"
+    type: number
+    default: 8096
+    required: true
+  - key: JELLYFIN_NETWORK_MODE
+    label: "网络模式"
+    type: select
+    options:
+      - value: host
+        label: "host（推荐，支持 DLNA 发现）"
+      - value: bridge
+        label: "bridge（桥接网络）"
+    default: host
+    required: true
+
+access:
+  subdomain: media
+  port: 8096
+  protocol: http
+  proxy_extra:
+    proxy_buffering: "off"
+    client_max_body_size: "0"
+
+healthcheck:
+  url: "http://127.0.0.1:{JELLYFIN_PORT}/health"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "2g"
+  cpu_limit: "2.0"
