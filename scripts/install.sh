@@ -7,7 +7,7 @@ set -euo pipefail
 # ============================================================
 
 EASYSERVER_ROOT="${EASYSERVER_ROOT:-$HOME/easyserver}"
-REPO_URL="${REPO_URL:-https://github.com/liangfei-sun/EasyServer.git}"
+REPO_URL="${REPO_URL:-git@github.com:liangfei-sun/EasyServer.git}"
 
 RED='[0;31m'
 GREEN='[0;32m'

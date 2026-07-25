@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/liangfei-sun/EasyServer/main/script
 ### 手动安装
 
 ```bash
-git clone https://github.com/liangfei-sun/EasyServer.git
+git clone git@github.com:liangfei-sun/EasyServer.git
 cd easyserver
 cp .env.example .env
 # 编辑 .env 配置你的域名和参数
