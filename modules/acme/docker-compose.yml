@@ -7,8 +7,8 @@ services:
     command: daemon
     volumes:
       - ${DATA_DIR}/acme/data:/acme.sh
-      - ./modules/nginx/acme-challenge:/acme-challenge
-      - ./modules/nginx/ssl:/etc/nginx/ssl
+      - ../../modules/nginx/acme-challenge:/acme-challenge
+      - ../../modules/nginx/ssl:/etc/nginx/ssl
     network_mode: host
     environment:
       - TZ=Asia/Shanghai

@@ -7,10 +7,10 @@ services:
     container_name: easyserver-nginx
     network_mode: ${NGINX_NETWORK_MODE:-host}
     volumes:
-      - ./modules/nginx/conf.d:/etc/nginx/conf.d
-      - ./modules/nginx/ssl:/etc/nginx/ssl
-      - ./modules/nginx/log:/var/log/nginx
-      - ./modules/nginx/acme-challenge:/acme-challenge
+      - ./conf.d:/etc/nginx/conf.d
+      - ./ssl:/etc/nginx/ssl
+      - ./log:/var/log/nginx
+      - ./acme-challenge:/acme-challenge
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped

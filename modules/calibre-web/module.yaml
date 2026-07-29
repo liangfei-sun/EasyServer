@@ -41,3 +41,44 @@ healthcheck:
 resources:
   memory_limit: "512m"
   cpu_limit: "1.0"
+
+docs:
+  usage: |
+    ## Calibre-Web 电子书管理
+
+    在线电子书管理系统，支持在线阅读、上传、格式转换和 OPDS 订阅。
+
+    ### 首次使用
+    1. 通过 `https://books.你的域名:8443` 访问
+    2. 默认管理员账户：`admin`，密码：`admin123`
+    3. 首次登录请立即修改密码
+    4. 上传 Calibre 数据库或电子书文件
+
+    ### 主要功能
+    - **在线阅读**：浏览器中直接阅读电子书
+    - **书库管理**：上传、分类、搜索电子书
+    - **格式转换**：支持常见电子书格式互转
+    - **OPDS 订阅**：支持 Kobo、Moon+ Reader 等阅读器通过 OPDS 订阅书库
+    - **用户管理**：创建多用户，设置不同权限
+
+    ### OPDS 配置
+    在支持 OPDS 的阅读器中添加：
+    - **地址**：`https://books.你的域名:8443/opds`
+    - **账户**：Calibre-Web 中创建的用户
+
+    ### 书库初始化
+    需要上传一个 Calibre 数据库文件 (`metadata.db`) 或直接在 Web 界面中管理书库。
+
+  faq:
+    - q: "登录后显示无书库？"
+      a: "需要先上传 Calibre 数据库文件或在设置中配置书库路径"
+    - q: "如何批量导入电子书？"
+      a: "将电子书放入 `data/calibre-web/books/` 目录，然后在 Web 界面中扫描导入"
+    - q: "忘记密码怎么办？"
+      a: "删除 `data/calibre-web/config/app.db` 后重启，会恢复默认账户"
+
+  links:
+    - label: "Calibre-Web GitHub"
+      url: "https://github.com/janeczku/calibre-web"
+    - label: "Calibre 官方网站"
+      url: "https://calibre-ebook.com/"

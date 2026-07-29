@@ -1,0 +1,28 @@
+# EasyServer - 数据备份模块
+
+services:
+  backup:
+    image: restic/restic:latest
+    container_name: easyserver-backup
+    entrypoint: ["/scripts/entrypoint.sh"]
+    volumes:
+      - ${DATA_DIR}:/data:ro
+      - ${DATA_DIR}/backups:/backups
+      - ${PROJECT_ROOT:-/home/lf/easyserver}/.env:/config/.env:ro
+      - ./scripts:/scripts:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - RESTIC_REPOSITORY=/backups/restic-repo
+      - RESTIC_PASSWORD=${BACKUP_PASSWORD:-easyserver-backup-2024}
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
+      - BACKUP_RETAIN_DAYS=${BACKUP_RETAIN_DAYS:-7}
+      - BACKUP_CLOUD_PROVIDER=${BACKUP_CLOUD_PROVIDER:-none}
+      - BACKUP_CLOUD_BUCKET=${BACKUP_CLOUD_BUCKET:-}
+      - BACKUP_CLOUD_KEY=${BACKUP_CLOUD_KEY:-}
+      - BACKUP_CLOUD_SECRET=${BACKUP_CLOUD_SECRET:-}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"

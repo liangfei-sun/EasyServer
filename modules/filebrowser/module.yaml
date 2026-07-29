@@ -37,3 +37,43 @@ healthcheck:
 resources:
   memory_limit: "256m"
   cpu_limit: "1.0"
+
+docs:
+  usage: |
+    ## FileBrowser 文件管理器
+
+    轻量级 Web 文件管理器，支持文件上传、下载、在线预览和分享。
+
+    ### 首次使用
+    1. 通过 `https://files.你的域名:8443` 访问
+    2. 默认管理员账户：`admin`，密码：`admin`
+    3. 首次登录请立即修改密码
+
+    ### 主要功能
+    - **文件管理**：上传、下载、删除、重命名、移动文件/文件夹
+    - **在线预览**：支持图片、视频、文本文件在线预览
+    - **分享链接**：创建文件分享链接，支持设置有效期
+    - **用户管理**：创建多用户，设置不同目录权限
+    - **命令行**：支持在 Web 界面执行命令（管理员）
+
+    ### 管理的文件目录
+    默认管理 `data/filebrowser/files/` 目录，可在配置中修改。
+
+    ### 安全建议
+    - 首次登录后立即修改默认密码
+    - 为不同用户设置不同的目录访问权限
+    - 避免将敏感目录开放给普通用户
+
+  faq:
+    - q: "上传大文件失败？"
+      a: "检查 Nginx 的 `client_max_body_size` 配置，确保大于文件大小"
+    - q: "如何修改管理的文件目录？"
+      a: "在模块配置中修改「管理的文件目录」参数，重启服务生效"
+    - q: "忘记密码怎么办？"
+      a: "删除 `data/filebrowser/config/filebrowser.db/` 后重启，会恢复默认账户"
+
+  links:
+    - label: "FileBrowser 官方文档"
+      url: "https://filebrowser.org/"
+    - label: "FileBrowser GitHub"
+      url: "https://github.com/filebrowser/filebrowser"

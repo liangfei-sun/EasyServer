@@ -33,3 +33,42 @@ healthcheck:
 resources:
   memory_limit: "256m"
   cpu_limit: "0.5"
+
+docs:
+  usage: |
+    ## Uptime Kuma 监控
+
+    开源的网站监控工具，支持 HTTP(s)、TCP、DNS 等多种监控方式，并提供美观的状态页面。
+
+    ### 首次使用
+    1. 通过 `https://status.你的域名:8443` 访问
+    2. 创建管理员账户
+    3. 添加监控目标
+
+    ### 常用功能
+    - **添加监控**：支持 HTTP、TCP、Ping、DNS、Docker 容器等监控类型
+    - **通知设置**：支持邮件、Webhook、Telegram、微信等多种通知方式
+    - **状态页面**：创建公开的状态页面，分享服务运行状态
+    - **维护计划**：设置定期维护窗口，维护期间不发送告警
+
+    ### 监控类型说明
+    | 类型 | 说明 |
+    |------|------|
+    | HTTP(s) | 监控网站是否可访问 |
+    | TCP | 监控端口是否开放 |
+    | Ping | 监控服务器是否在线 |
+    | Docker | 监控 Docker 容器运行状态 |
+
+  faq:
+    - q: "监控显示离线但服务正常？"
+      a: "检查监控目标的 URL 和端口是否正确，确认网络可达"
+    - q: "如何配置通知？"
+      a: "在设置页面中添加通知渠道，支持邮件、Webhook、Telegram 等"
+    - q: "状态页面如何公开分享？"
+      a: "在设置中创建状态页面，获得公开链接，可放置在任何网页中"
+
+  links:
+    - label: "官方文档"
+      url: "https://github.com/louislam/uptime-kuma/wiki"
+    - label: "演示站点"
+      url: "https://demo.kuma.pet/"

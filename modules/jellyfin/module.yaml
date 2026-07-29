@@ -44,3 +44,45 @@ healthcheck:
 resources:
   memory_limit: "2g"
   cpu_limit: "2.0"
+
+docs:
+  usage: |
+    ## Jellyfin 媒体服务器
+
+    开源的媒体服务器，可管理和串流视频、音乐、图片，支持多种客户端播放。
+
+    ### 首次使用
+    1. 通过 `https://media.你的域名:8443` 访问
+    2. 完成初始设置向导（语言、管理员账户）
+    3. 添加媒体库（视频、音乐、图片）
+
+    ### 支持的客户端
+    | 平台 | 客户端 |
+    |------|--------|
+    | Web | 浏览器直接访问 |
+    | Android | Jellyfin Android App |
+    | iOS | Swiftfin 或 Jellyfin Mobile |
+    | TV | Android TV、Roku、Apple TV |
+    | 桌面 | Jellyfin Media Player |
+
+    ### 媒体库配置
+    - **视频库**：将视频文件放入 `data/jellyfin/media/` 目录
+    - **自动刮削**：Jellyfin 会自动从网上获取影视信息、封面、字幕
+    - **硬件转码**：支持 GPU 硬件加速转码（需配置）
+
+    ### 网络模式
+    推荐使用 host 网络模式，支持 DLNA 自动发现和更好的网络性能。
+
+  faq:
+    - q: "视频播放卡顿？"
+      a: "检查网络带宽，尝试降低视频质量或开启硬件转码"
+    - q: "如何添加外部字幕？"
+      a: "将字幕文件与视频放在同一目录，命名相同即可自动识别"
+    - q: "客户端连接不上服务器？"
+      a: "确认服务器地址和端口正确，检查防火墙是否开放端口"
+
+  links:
+    - label: "Jellyfin 官方文档"
+      url: "https://jellyfin.org/docs/"
+    - label: "客户端下载"
+      url: "https://jellyfin.org/downloads/"

@@ -21,6 +21,10 @@
           <el-icon><Tools /></el-icon>
           <span>全局设置</span>
         </el-menu-item>
+        <el-menu-item index="/docs">
+          <el-icon><Document /></el-icon>
+          <span>使用文档</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-main style="padding: 20px; background: #f0f2f5">

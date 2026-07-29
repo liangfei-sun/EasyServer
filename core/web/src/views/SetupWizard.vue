@@ -120,14 +120,20 @@ const nextStep = () => { step.value++ }
 
 const loadModules = async () => {
   try {
-    const { data } = await api.get('/api/modules')
-    availableModules.value = (data.modules || []).filter(m => m.id !== 'nginx')
+    const { data } = await api.get('/modules')
+    const allModules = []
+    for (const cat of (data.categories || [])) {
+      for (const mod of (cat.modules || [])) {
+        allModules.push({ ...mod, category: cat.id })
+      }
+    }
+    availableModules.value = allModules.filter(m => m.id !== 'nginx')
   } catch (e) {}
 }
 
 const generatePassword = async () => {
   try {
-    const { data } = await api.post('/api/config/generate-password')
+    const { data } = await api.post('/config/generate-password')
     config.value.admin_password = data.password
   } catch (e) {
     config.value.admin_password = Math.random().toString(36).slice(-16)
@@ -138,7 +144,7 @@ const startDeploy = async () => {
   deploying.value = true
   deployLog.value = '正在保存配置...\n'
   try {
-    await api.put('/api/config', {
+    await api.put('/config', {
       domain: config.value.domain,
       access_mode: config.value.access_mode,
       ssl_email: config.value.ssl_email
@@ -146,12 +152,12 @@ const startDeploy = async () => {
     deployLog.value += '配置已保存\n'
     for (const svcId of config.value.selected_services) {
       deployLog.value += `安装 ${svcId}...\n`
-      await api.post(`/api/modules/${svcId}/install`, { config: {} })
+      await api.post('/modules/install', { module_id: svcId, config: {} })
       deployLog.value += `${svcId} 安装完成\n`
     }
     deployLog.value += '生成 Nginx 配置...\n'
-    await api.post('/api/nginx/generate')
-    await api.post('/api/config/setup/complete')
+    await api.post('/nginx/generate')
+    await api.post('/config/setup/complete')
     deployLog.value += '部署完成！\n'
     deployed.value = true
   } catch (e) {

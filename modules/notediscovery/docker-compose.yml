@@ -11,6 +11,8 @@ services:
       - ${DATA_DIR}/notediscovery/config.yaml:/app/config.yaml
     environment:
       - TZ=Asia/Shanghai
+      - AUTHENTICATION_PASSWORD=${NOTEDISCOVERY_PASSWORD:-LF4659@com}
+      - AUTHENTICATION_SECRET_KEY=${NOTEDISCOVERY_SECRET_KEY:-}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

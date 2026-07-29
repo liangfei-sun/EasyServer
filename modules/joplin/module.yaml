@@ -46,3 +46,44 @@ healthcheck:
 resources:
   memory_limit: "512m"
   cpu_limit: "1.0"
+
+docs:
+  usage: |
+    ## Joplin Server 笔记同步
+
+    Joplin 笔记同步服务器，配合 Joplin 客户端实现多设备笔记同步，数据完全自托管。
+
+    ### 首次使用
+    1. 通过 `https://joplin.你的域名:8443` 访问 Web 界面
+    2. 默认管理员账户：`admin@localhost`，密码：`admin`
+    3. 首次登录请立即修改密码
+    4. 创建用户账户供客户端同步使用
+
+    ### 客户端配置
+    在 Joplin 客户端中设置同步：
+    - **同步目标**：Joplin Server
+    - **服务器地址**：`https://joplin.你的域名:8443`
+    - **用户名/密码**：在 Web 界面创建的用户账户
+
+    ### 主要功能
+    - **多设备同步**：在手机、电脑、平板间同步笔记
+    - **端到端加密**：支持 E2EE 加密同步
+    - **协作共享**：与他人共享笔记本协作编辑
+    - **历史记录**：保留笔记修改历史，可回滚
+
+    ### 数据库
+    使用 PostgreSQL 数据库存储笔记数据，数据库密码在配置时设置。
+
+  faq:
+    - q: "同步失败怎么办？"
+      a: "检查服务器地址是否正确，确认账户密码正确，查看 Joplin Server 日志"
+    - q: "如何导出笔记？"
+      a: "在 Web 界面或客户端中导出为 JEX 格式，可用于备份或迁移"
+    - q: "忘记管理员密码？"
+      a: "进入 Joplin 容器执行 `docker exec -it easyserver-joplin-app npm --prefix packages/server/tools reset-admin-password`"
+
+  links:
+    - label: "Joplin 官方网站"
+      url: "https://joplinapp.org/"
+    - label: "Joplin Server 文档"
+      url: "https://joplinapp.org/help/apps/server/"

@@ -39,6 +39,18 @@ Thumbs.db
 # SSL 证书（敏感文件）
 modules/nginx/ssl/
 
+# Nginx 运行时生成的配置
+modules/nginx/conf.d/
+
+# 截图文件
+*.png
+
+# 部署配置（不含模板）
+deploy-config.json
+
+# restic 备份数据
+modules/backup/data/
+
 # 临时文件
 *.tmp
 **/.tmp/

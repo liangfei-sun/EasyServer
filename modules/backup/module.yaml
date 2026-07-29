@@ -1,0 +1,71 @@
+id: backup
+name: "数据备份"
+version: "1.0"
+description: "支持本地和云端（阿里云OSS/百度网盘）的自动增量备份"
+category: infra
+author: "community"
+depends_on: []
+soft_depends_on: []
+config:
+  - key: BACKUP_SCHEDULE
+    label: "备份周期"
+    type: select
+    default: "0 2 * * *"
+    description: "自动备份的执行时间"
+    options:
+      - { value: "0 2 * * *", label: "每天凌晨2点" }
+      - { value: "0 2 * * 0", label: "每周日凌晨2点" }
+      - { value: "0 2 1 * *", label: "每月1日凌晨2点" }
+      - { value: "0 */6 * * *", label: "每6小时" }
+  - key: BACKUP_RETAIN_DAYS
+    label: "本地保留天数"
+    type: number
+    default: 7
+    description: "本地备份文件保留天数，超期自动清理"
+  - key: BACKUP_CLOUD_PROVIDER
+    label: "云端存储"
+    type: select
+    default: "none"
+    description: "远程备份存储服务商"
+    options:
+      - { value: "none", label: "不使用" }
+      - { value: "aliyun-oss", label: "阿里云 OSS" }
+      - { value: "baidu-netdisk", label: "百度网盘" }
+  - key: BACKUP_CLOUD_BUCKET
+    label: "云端 Bucket/路径"
+    type: text
+    description: "阿里云 OSS Bucket 名称或百度网盘路径"
+  - key: BACKUP_CLOUD_KEY
+    label: "云端 AccessKey"
+    type: password
+  - key: BACKUP_CLOUD_SECRET
+    label: "云端 SecretKey"
+    type: password
+  - key: BACKUP_PASSWORD
+    label: "备份加密密码"
+    type: password
+    description: "restic 仓库加密密码，请妥善保管"
+access:
+  port: 0
+  subdomain: ""
+  protocol: ""
+healthcheck:
+  method: "file_exists"
+  path: "/data/backups"
+resources:
+  memory: "256M"
+  cpu: "0.5"
+docs:
+  usage: |
+    数据备份模块使用 restic 进行增量备份，支持本地和云端存储。
+    首次运行会自动初始化 restic 仓库并执行全量备份，后续为增量备份。
+    备份内容：所有服务数据（data/目录）和配置文件（.env）。
+    排除规则：jellyfin/cache、jellyfin/transcodes、*.log、临时文件。
+  faq:
+    - q: "首次备份需要多长时间？"
+      a: "取决于数据量，7.8GB Jellyfin 数据首次约需 10-30 分钟（排除缓存后）。后续增量备份通常 1-5 分钟。"
+    - q: "如何恢复备份？"
+      a: "进入备份容器执行 restic restore，或在管理面板点击'恢复'按钮选择备份快照。"
+  links:
+    - label: "restic 官方文档"
+      url: "https://restic.readthedocs.io/"

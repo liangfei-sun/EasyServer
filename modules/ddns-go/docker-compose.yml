@@ -6,7 +6,7 @@ services:
     container_name: easyserver-ddns-go
     network_mode: host
     volumes:
-      - ${DATA_DIR}/ddns-go/config:/root/.ddns_go_config.yaml
+      - ${DATA_DIR}/ddns-go/config/.ddns_go_config.yaml:/root/.ddns_go_config.yaml
     command: ["-f", "${DDNS_GO_CHECK_INTERVAL:-600}", "-cacheTimes", "${DDNS_GO_CACHE_TIMES:-12}"]
     environment:
       - TZ=Asia/Shanghai

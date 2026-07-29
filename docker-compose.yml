@@ -12,6 +12,8 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:8900:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /usr/bin/docker:/usr/local/bin/docker:ro
+      - /usr/libexec/docker/cli-plugins/docker-compose:/usr/local/lib/docker/cli-plugins/docker-compose:ro
       - .:/app:rw
       - ${DATA_DIR:-./data}:/data
     environment:

@@ -21,9 +21,19 @@ class ConfigManager:
 
     def load_config(self) -> dict:
         if not self.config_file.exists():
-            return self._default_config()
+            default = self._default_config()
+            self.save_config(default)
+            return default
         with open(self.config_file, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or self._default_config()
+            config = yaml.safe_load(f)
+        if not config or not isinstance(config, dict):
+            config = {}
+        # 合并默认值，保留已有配置字段
+        default = self._default_config()
+        for key, value in default.items():
+            if key not in config:
+                config[key] = value
+        return config
 
     def save_config(self, config: dict):
         self._ensure_dirs()
@@ -54,7 +64,7 @@ class ConfigManager:
         self.save_config(config)
 
     def _default_config(self) -> dict:
-        return {"domain": "", "access_mode": "domain", "https_port": 8443, "ssl_email": "", "dns_provider": "aliyun", "installed_modules": [], "setup_completed": False}
+        return {"domain": "", "access_mode": "domain", "https_port": 8443, "ssl_email": "", "dns_provider": "aliyun", "panel_subdomain": "panel", "installed_modules": [], "setup_completed": False}
 
     def load_env(self) -> dict:
         if not self.env_file.exists():

@@ -54,6 +54,18 @@ class NginxGenerator:
             if "client_max_body_size" in proxy_extra:
                 site["client_max_body_size"] = proxy_extra["client_max_body_size"]
             sites.append(site)
+
+        # 插入 EasyServer 管理面板自身的 server block
+        panel_subdomain = config.get("panel_subdomain", "panel")
+        if panel_subdomain:
+            panel_name = f"{panel_subdomain}.{domain}"
+            server_names.append(panel_name)
+            sites.insert(0, {
+                "name": "EasyServer 管理面板",
+                "server_name": panel_name,
+                "backend_port": 8900
+            })
+
         content = template.render(http_port=config.get("http_port", 80), https_port=config.get("https_port", 8443), domain=domain, server_names=" ".join(server_names), sites=sites)
         with open(self.conf_dir / "sites.conf", "w") as f:
             f.write(content)

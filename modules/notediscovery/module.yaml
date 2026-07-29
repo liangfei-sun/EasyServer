@@ -47,3 +47,37 @@ healthcheck:
 resources:
   memory_limit: "256m"
   cpu_limit: "1.0"
+
+docs:
+  usage: |
+    ## NoteDiscovery 笔记管理
+
+    基于 Markdown 的在线笔记管理工具，支持搜索、编辑和在线预览。
+
+    ### 首次使用
+    1. 通过 `https://notes.你的域名:8443` 访问
+    2. 如果启用了认证，输入设置的密码登录
+    3. 开始创建和管理 Markdown 笔记
+
+    ### 主要功能
+    - **Markdown 编辑**：支持实时预览的 Markdown 编辑器
+    - **全文搜索**：快速搜索笔记内容
+    - **文件管理**：支持上传和管理附件
+    - **认证保护**：可启用密码认证保护笔记安全
+
+    ### 配置说明
+    - **登录认证**：建议启用，防止笔记被未授权访问
+    - **会话密钥**：用于加密登录会话，建议使用随机字符串
+
+    ### 数据存储
+    笔记文件存储在 `data/notediscovery/data/` 目录下，为纯 Markdown 文件，可随时备份。
+
+  faq:
+    - q: "忘记密码怎么办？"
+      a: "在模块配置中重新设置密码，重启服务即可生效"
+    - q: "笔记数据如何备份？"
+      a: "备份 `data/notediscovery/data/` 目录即可，均为 Markdown 文件"
+
+  links:
+    - label: "NoteDiscovery GitHub"
+      url: "https://github.com/0x2E/NoteDiscovery"

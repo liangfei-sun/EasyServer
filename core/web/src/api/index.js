@@ -9,6 +9,8 @@ export const stopService = (id) => api.post(`/services/${id}/stop`)
 export const restartService = (id) => api.post(`/services/${id}/restart`)
 export const updateService = (id) => api.post(`/services/${id}/update`)
 export const getServiceLogs = (id, lines = 100) => api.get(`/services/${id}/logs`, { params: { lines } })
+export const checkPorts = () => api.get('/services/port-check')
+export const updateServicePort = (id, port) => api.put(`/services/${id}/port`, null, { params: { port } })
 
 export const getConfig = () => api.get('/config')
 export const updateConfig = (data) => api.put('/config', data)
@@ -23,5 +25,14 @@ export const uninstallModule = (id) => api.post(`/modules/${id}/uninstall`)
 
 export const generateNginx = () => api.post('/nginx/generate')
 export const reloadNginx = () => api.post('/nginx/reload')
+
+export const getDocList = () => api.get('/docs')
+export const getDoc = (docId) => api.get(`/docs/${docId}`)
+export const getModuleDocs = (moduleId) => api.get(`/docs/modules/${moduleId}`)
+
+// 备份管理
+export const getBackupStatus = () => api.get('/backup/status')
+export const triggerBackup = () => api.post('/backup/trigger')
+export const updateBackupSchedule = (schedule, retainDays) => api.put('/backup/schedule', { schedule, retain_days: retainDays })
 
 export default api

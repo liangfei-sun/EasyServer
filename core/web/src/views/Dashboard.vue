@@ -56,24 +56,42 @@ const progressColor = '#409EFF'
 
 const loadServices = async () => {
   try {
-    const { data } = await api.get('/api/services')
-    services.value = data.services || []
+    const { data } = await api.get('/services')
+    services.value = (data.services || []).map(s => ({
+      id: s.module,
+      name: s.module,
+      status: s.running ? 'running' : (s.error ? 'error' : 'stopped'),
+      ...s
+    }))
   } catch (e) { console.error(e) }
 }
 
+const formatMem = (mb) => mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
+
 const loadSystemInfo = async () => {
   try {
-    const { data } = await api.get('/api/services/system-info')
-    system.value = data
+    const { data } = await api.get('/info')
+    system.value = {
+      appName: data.name || 'EasyServer',
+      appVersion: data.version || '',
+      appDescription: data.description || '',
+      cpu: typeof data.cpu === 'number' ? data.cpu : 0,
+      memUsed: data.memTotal ? formatMem(data.memUsed) : '-',
+      memTotal: data.memTotal ? formatMem(data.memTotal) : '-',
+      memPercent: typeof data.memPercent === 'number' ? data.memPercent : 0,
+      diskUsed: data.diskTotal ? data.diskUsed + ' GB' : '-',
+      diskTotal: data.diskTotal ? data.diskTotal + ' GB' : '-',
+      diskPercent: typeof data.diskPercent === 'number' ? data.diskPercent : 0,
+    }
   } catch (e) {
-    system.value = { cpu: 0, memUsed: 'N/A', memTotal: 'N/A', memPercent: 0, diskUsed: 'N/A', diskTotal: 'N/A', diskPercent: 0 }
+    // 保持默认值
   }
 }
 
 const toggleService = async (svc) => {
   const action = svc.status === 'running' ? 'stop' : 'start'
   try {
-    await api.post(`/api/services/${svc.id}/${action}`)
+    await api.post(`/services/${svc.id}/${action}`)
     loadServices()
   } catch (e) { console.error(e) }
 }

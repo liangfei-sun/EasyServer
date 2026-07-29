@@ -57,3 +57,39 @@ healthcheck:
 resources:
   memory_limit: "256m"
   cpu_limit: "1.0"
+
+# 使用文档
+docs:
+  usage: |
+    ## Nginx 反向代理
+
+    高性能反向代理服务器，是所有服务的统一入口，提供 SSL 终止、域名路由和静态文件服务。
+
+    ### 核心功能
+    - **反向代理**：根据子域名自动路由到对应的后端服务
+    - **SSL 终止**：配合 ACME 模块自动配置 HTTPS
+    - **域名路由**：每个服务通过 `子域名.你的域名` 访问
+
+    ### 配置说明
+    - **HTTP 端口**：默认 80，用于 ACME 证书验证和 HTTP→HTTPS 跳转
+    - **HTTPS 端口**：默认 8443（国内运营商通常封锁 443）
+    - **网络模式**：推荐使用 host 模式，直接使用主机网络栈
+
+    ### 常用操作
+    - 在全局设置中配置域名后，点击「生成 Nginx 配置」
+    - 安装或卸载服务后，需重新生成 Nginx 配置并重载
+    - 可通过「重载 Nginx」按钮热更新配置，无需重启
+
+  faq:
+    - q: "Nginx 启动失败？"
+      a: "检查 80 和 8443 端口是否被占用，运行 `sudo lsof -i :80` 查看"
+    - q: "配置后访问显示 502 Bad Gateway？"
+      a: "检查后端服务是否正常运行，以及端口配置是否正确"
+    - q: "如何自定义 Nginx 配置？"
+      a: "可在 modules/nginx/conf.d/ 目录下添加自定义 .conf 文件，然后重载 Nginx"
+
+  links:
+    - label: "Nginx 官方文档"
+      url: "https://nginx.org/en/docs/"
+    - label: "Nginx 配置指南"
+      url: "https://nginx.org/en/docs/beginners_guide.html"

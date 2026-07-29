@@ -1,0 +1,95 @@
+# EasyServer 部署清单
+# 此文件描述部署所需的全部参数和环境要求，供 AI 工具解析执行
+
+version: "1.0"
+name: "EasyServer"
+description: "个人服务器一站式模块化部署方案"
+
+# 环境要求
+requirements:
+  os:
+    - "Ubuntu 20.04+"
+    - "Debian 11+"
+    - "CentOS 7+"
+  docker:
+    min_version: "20.10"
+    compose: "v2"
+  resources:
+    min_ram_mb: 1024
+    min_disk_gb: 10
+    recommended_ram_mb: 4096
+    recommended_disk_gb: 50
+
+# 必填参数
+required_params:
+  - key: domain
+    label: "主域名"
+    description: "用于服务访问的域名，如 example.com"
+    type: string
+    example: "lfblog.top"
+  - key: email
+    label: "SSL 邮箱"
+    description: "Let's Encrypt 证书申请邮箱"
+    type: string
+    example: "user@example.com"
+  - key: dns_provider
+    label: "DNS 提供商"
+    type: select
+    options: ["aliyun", "cloudflare", "dnspod"]
+    default: "aliyun"
+  - key: ali_key
+    label: "阿里云 AccessKey ID"
+    description: "DNS 解析和 SSL 证书验证使用"
+    type: password
+    required_when: "dns_provider=aliyun"
+  - key: ali_secret
+    label: "阿里云 AccessKey Secret"
+    type: password
+    required_when: "dns_provider=aliyun"
+
+# 可选参数
+optional_params:
+  - key: password
+    label: "服务密码"
+    description: "各服务通用密码，留空自动生成"
+    type: password
+  - key: cf_tunnel_token
+    label: "Cloudflare Tunnel Token"
+    description: "如需 Cloudflare 隧道外网访问"
+    type: password
+  - key: https_port
+    label: "HTTPS 端口"
+    type: number
+    default: 8443
+    description: "运营商封锁 443 时使用"
+  - key: modules
+    label: "要安装的模块"
+    type: list
+    default: ["nginx", "acme", "ddns-go", "uptime-kuma", "notediscovery", "joplin", "jellyfin", "calibre-web", "filebrowser", "cloudflare-tunnel"]
+
+# 部署步骤
+steps:
+  - name: "环境检测"
+    command: "bash scripts/install.sh --check-only"
+    description: "检测 OS、Docker、网络、端口"
+  - name: "安装基础设施"
+    command: "bash scripts/install.sh"
+    description: "安装 Docker、克隆项目、创建网络"
+  - name: "配置参数"
+    command: "bash scripts/auto-deploy.sh --non-interactive --config deploy-config.json"
+    description: "写入配置、安装模块、生成 Nginx、完成设置"
+  - name: "验证部署"
+    command: "bash scripts/healthcheck.sh"
+    description: "检查所有服务和外网可达性"
+
+# 部署后信息
+post_deploy:
+  access_urls:
+    - "管理面板: https://panel.{domain}:{https_port}"
+    - "监控: https://status.{domain}:{https_port}"
+    - "笔记: https://notes.{domain}:{https_port}"
+    - "Joplin: https://joplin.{domain}:{https_port}"
+    - "媒体: https://media.{domain}:{https_port}"
+    - "电子书: https://books.{domain}:{https_port}"
+    - "文件: https://files.{domain}:{https_port}"
+  note: "需要在 DNS 服务商添加子域名解析记录，或使用 Cloudflare Tunnel"

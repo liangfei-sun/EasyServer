@@ -41,3 +41,37 @@ healthcheck:
 resources:
   memory_limit: "64m"
   cpu_limit: "0.25"
+
+docs:
+  usage: |
+    ## ACME SSL 证书管理
+
+    使用 acme.sh 自动申请和续签 Let's Encrypt SSL 证书，支持 DNS 验证方式。
+
+    ### 功能说明
+    - **自动申请证书**：支持泛域名证书 (*.你的域名)
+    - **自动续签**：证书每 60 天自动续签，无需手动操作
+    - **DNS 验证**：通过阿里云 DNS API 验证域名所有权
+
+    ### 配置步骤
+    1. 在阿里云 RAM 控制台创建 AccessKey，授予 `AliyunDNSFullAccess` 权限
+    2. 填写 AccessKey 和 Secret
+    3. 填写主域名（如 `example.com`，非子域名）
+    4. 安装模块后证书会自动申请
+
+    ### 证书位置
+    证书文件存储在 `data/acme/data/` 目录下，Nginx 模块会自动引用。
+
+  faq:
+    - q: "证书申请失败怎么办？"
+      a: "检查阿里云 AccessKey 是否有 DNS 管理权限，确认域名解析已生效"
+    - q: "证书到期后会自动续签吗？"
+      a: "会，ACME 模块会自动续签，只需保持容器运行和 AccessKey 有效"
+    - q: "支持哪些域名服务商？"
+      a: "当前默认支持阿里云，可通过修改 acme.sh 配置支持其他服务商"
+
+  links:
+    - label: "acme.sh 官方文档"
+      url: "https://github.com/acmesh-official/acme.sh/wiki"
+    - label: "Let's Encrypt"
+      url: "https://letsencrypt.org/"
