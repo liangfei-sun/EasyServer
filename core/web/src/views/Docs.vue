@@ -1,7 +1,13 @@
 <template>
   <div class="docs-container">
+    <!-- 手机端目录切换按钮 -->
+    <el-button v-if="isMobile" class="docs-toggle" @click="sidebarOpen = !sidebarOpen" type="primary" size="small">
+      {{ sidebarOpen ? '关闭目录' : '目录' }}
+    </el-button>
+    <!-- 手机端遮罩 -->
+    <div v-if="isMobile && sidebarOpen" class="docs-overlay" @click="sidebarOpen = false"></div>
     <!-- 左侧目录树 -->
-    <div class="docs-sidebar">
+    <div class="docs-sidebar" :class="{ 'docs-sidebar-open': sidebarOpen }">
       <div class="sidebar-title">文档目录</div>
       
       <!-- 全局文档 -->
@@ -12,7 +18,7 @@
           :key="doc.id"
           class="sidebar-item"
           :class="{ active: currentDocId === doc.id }"
-          @click="loadGlobalDoc(doc.id)"
+          @click="loadGlobalDoc(doc.id); isMobile && (sidebarOpen = false)"
         >
           <el-icon><component :is="doc.icon" /></el-icon>
           <span>{{ doc.title }}</span>
@@ -27,7 +33,7 @@
           :key="doc.id"
           class="sidebar-item"
           :class="{ active: currentDocId === doc.id }"
-          @click="loadModuleDoc(doc.module_id)"
+          @click="loadModuleDoc(doc.module_id); isMobile && (sidebarOpen = false)"
         >
           <el-icon><Box /></el-icon>
           <span>{{ doc.title }}</span>
@@ -86,13 +92,20 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getDocList, getDoc, getModuleDocs } from '../api'
 import { marked } from 'marked'
 
 const route = useRoute()
 const router = useRouter()
+
+const isMobile = ref(false)
+const sidebarOpen = ref(false)
+const checkMobile = () => {
+  isMobile.value = window.innerWidth < 768
+  if (!isMobile.value) sidebarOpen.value = false
+}
 
 const globalDocs = ref([])
 const moduleDocs = ref([])
@@ -175,10 +188,16 @@ function handleRouteParam() {
 }
 
 onMounted(async () => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   await fetchDocList()
   if (route.params.docId) {
     handleRouteParam()
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 
 watch(() => route.params.docId, (newVal) => {
@@ -192,6 +211,21 @@ watch(() => route.params.docId, (newVal) => {
   height: 100%;
   min-height: calc(100vh - 80px);
   gap: 0;
+  position: relative;
+}
+
+.docs-toggle {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+}
+
+.docs-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 99;
 }
 
 .docs-sidebar {
@@ -396,5 +430,24 @@ watch(() => route.params.docId, (newVal) => {
 
 .content-wrapper {
   max-width: 860px;
+}
+
+@media (max-width: 768px) {
+  .docs-sidebar {
+    position: fixed;
+    z-index: 100;
+    height: calc(100vh - 80px);
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    top: 0;
+    left: 0;
+  }
+  .docs-sidebar.docs-sidebar-open {
+    transform: translateX(0);
+  }
+  .docs-content {
+    padding: 16px;
+    padding-top: 48px;
+  }
 }
 </style>

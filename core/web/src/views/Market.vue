@@ -1,10 +1,34 @@
 <template>
   <div class="market-page">
-    <h2>模块市场</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px">
+      <h2 style="margin: 0">模块市场</h2>
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索模块..."
+        :prefix-icon="Search"
+        clearable
+        style="max-width: 260px"
+        size="large"
+      />
+    </div>
+
+    <!-- 筛选标签 -->
+    <div class="filter-tags">
+      <el-check-tag
+        v-for="tag in filterTags"
+        :key="tag.key"
+        :checked="activeFilter === tag.key"
+        @change="activeFilter = tag.key"
+        style="margin-right: 8px; cursor: pointer"
+      >
+        {{ tag.label }}
+      </el-check-tag>
+    </div>
+
     <el-tabs v-model="activeCategory">
-      <el-tab-pane v-for="cat in categories" :key="cat.key" :label="cat.label" :name="cat.key">
+      <el-tab-pane v-for="cat in visibleCategories" :key="cat.key" :label="cat.label" :name="cat.key">
         <el-row :gutter="16">
-          <el-col :span="8" v-for="mod in filteredModules(cat.key)" :key="mod.id" style="margin-bottom: 16px">
+          <el-col :xs="24" :sm="12" :md="8" v-for="mod in filteredModules(cat.key)" :key="mod.id" style="margin-bottom: 16px">
             <el-card shadow="hover">
               <template #header>
                 <div class="card-header">
@@ -22,17 +46,18 @@
                 <el-tag size="small" type="warning" v-for="dep in mod.depends_on" :key="dep">依赖: {{ dep }}</el-tag>
               </div>
               <div class="mod-actions" style="margin-top: 12px">
-                <el-button v-if="!mod.installed" type="primary" size="small" @click="installModule(mod)">安装</el-button>
+                <el-button v-if="!mod.installed" type="primary" size="small" @click="installModule(mod)" :loading="installingId === mod.id">安装</el-button>
                 <el-button v-else type="danger" size="small" @click="uninstallModule(mod)">卸载</el-button>
               </div>
             </el-card>
           </el-col>
         </el-row>
+        <el-empty v-if="filteredModules(cat.key).length === 0" description="没有匹配的模块" />
       </el-tab-pane>
     </el-tabs>
 
     <!-- 安装配置弹窗 -->
-    <el-dialog v-model="configVisible" :title="'安装 ' + installingModule?.name" width="500px">
+    <el-dialog v-model="configVisible" :title="'安装 ' + installingModule?.name" :width="isMobile ? '95%' : '500px'">
       <el-form :model="installConfig" label-width="120px">
         <el-form-item v-for="field in configFields" :key="field.key" :label="field.label || field.key">
           <el-input v-if="field.type === 'text' || field.type === 'password'" v-model="installConfig[field.key]" :type="field.type" :placeholder="field.description" />
@@ -53,9 +78,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import api from '../api'
+
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
+onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
 
 const modules = ref([])
 const activeCategory = ref('infra')
@@ -64,10 +95,48 @@ const installingModule = ref(null)
 const installConfig = ref({})
 const configFields = ref([])
 const installing = ref(false)
+const installingId = ref('')
+const searchQuery = ref('')
+const activeFilter = ref('all')
 
 const categories = ref([])
 
-const filteredModules = (cat) => modules.value.filter(m => m.category === cat)
+const filterTags = [
+  { key: 'all', label: '全部' },
+  { key: 'installed', label: '已安装' },
+  { key: 'available', label: '可安装' }
+]
+
+const visibleCategories = computed(() => {
+  // 搜索时只显示有匹配模块的分类
+  if (!searchQuery.value && activeFilter.value === 'all') return categories.value
+  return categories.value.filter(cat => {
+    const mods = modules.value.filter(m => m.category === cat.key)
+    return applyFilters(mods).length > 0
+  })
+})
+
+const applyFilters = (mods) => {
+  let result = mods
+  // 搜索过滤
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(m =>
+      (m.name || '').toLowerCase().includes(q) ||
+      (m.description || '').toLowerCase().includes(q) ||
+      (m.id || '').toLowerCase().includes(q)
+    )
+  }
+  // 状态过滤
+  if (activeFilter.value === 'installed') {
+    result = result.filter(m => m.installed)
+  } else if (activeFilter.value === 'available') {
+    result = result.filter(m => !m.installed)
+  }
+  return result
+}
+
+const filteredModules = (cat) => applyFilters(modules.value.filter(m => m.category === cat))
 
 const loadModules = async () => {
   try {
@@ -98,6 +167,7 @@ const installModule = (mod) => {
 
 const confirmInstall = async () => {
   installing.value = true
+  installingId.value = installingModule.value.id
   try {
     await api.post('/modules/install', { module_id: installingModule.value.id, config: installConfig.value })
     ElMessage.success(`${installingModule.value.name} 安装成功`)
@@ -105,6 +175,7 @@ const confirmInstall = async () => {
     loadModules()
   } catch (e) { ElMessage.error(`安装失败: ${e.response?.data?.detail || e.message}`) }
   installing.value = false
+  installingId.value = ''
 }
 
 const uninstallModule = async (mod) => {
@@ -125,4 +196,5 @@ onMounted(loadModules)
 .mod-desc { color: #666; font-size: 13px; margin-bottom: 8px; }
 .mod-meta { display: flex; gap: 16px; font-size: 12px; color: #999; margin-bottom: 6px; }
 .mod-deps { display: flex; gap: 6px; flex-wrap: wrap; }
+.filter-tags { margin: 16px 0; }
 </style>

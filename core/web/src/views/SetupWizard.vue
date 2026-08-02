@@ -1,96 +1,92 @@
 <template>
   <div class="setup-wizard">
     <el-card class="wizard-card">
-      <h2>EasyServer 初始设置</h2>
-      <el-steps :active="step" align-center style="margin-bottom: 30px">
-        <el-step title="域名" />
-        <el-step title="访问模式" />
-        <el-step title="选择服务" />
-        <el-step title="设置密码" />
-        <el-step title="部署" />
+      <h2 style="text-align: center; margin-bottom: 8px">EasyServer 初始设置</h2>
+      <p class="wizard-subtitle">只需 2 步，快速搭建你的个人服务器</p>
+
+      <el-steps :active="step" align-center style="margin-bottom: 32px">
+        <el-step title="基础信息" />
+        <el-step title="管理员密码" />
       </el-steps>
 
-      <!-- Step 0: 域名 -->
-      <div v-if="step === 0">
+      <!-- Step 0: 域名与邮箱 -->
+      <div v-if="step === 0" class="step-content">
         <el-form label-width="100px">
-          <el-form-item label="域名">
-            <el-input v-model="config.domain" placeholder="example.com" />
+          <el-form-item label="主域名" required>
+            <el-input v-model="config.domain" placeholder="example.com" size="large" />
+            <div class="form-help">你的服务器将使用此域名访问，如 panel.example.com</div>
           </el-form-item>
-          <el-form-item label="SSL 邮箱">
-            <el-input v-model="config.ssl_email" placeholder="admin@example.com" />
+          <el-form-item label="SSL 邮箱" required>
+            <el-input v-model="config.ssl_email" placeholder="admin@example.com" size="large" />
+            <div class="form-help">用于申请 SSL 证书，Let's Encrypt 会发送验证邮件到此邮箱</div>
           </el-form-item>
         </el-form>
-      </div>
-
-      <!-- Step 1: 访问模式 -->
-      <div v-if="step === 1">
-        <el-radio-group v-model="config.access_mode" style="display: flex; flex-direction: column; gap: 16px">
-          <el-radio label="domain">
-            <strong>域名反代 (推荐)</strong>
-            <p style="color: #999; margin: 4px 0 0 24px">通过 Nginx 反向代理 + SSL 证书访问</p>
-          </el-radio>
-          <el-radio label="ipv6_direct">
-            <strong>IPv6 直连</strong>
-            <p style="color: #999; margin: 4px 0 0 24px">服务端口直接暴露在公网</p>
-          </el-radio>
-          <el-radio label="hybrid">
-            <strong>混合模式</strong>
-            <p style="color: #999; margin: 4px 0 0 24px">同时支持域名反代和 IPv6 直连</p>
-          </el-radio>
-        </el-radio-group>
-      </div>
-
-      <!-- Step 2: 选择服务 -->
-      <div v-if="step === 2">
-        <el-checkbox-group v-model="config.selected_services">
-          <div v-for="mod in availableModules" :key="mod.id" class="module-checkbox">
-            <el-checkbox :label="mod.id">
-              <strong>{{ mod.name }}</strong>
-              <span style="color: #999; margin-left: 8px">{{ mod.description }}</span>
-            </el-checkbox>
+        <el-alert type="info" :closable="false" style="margin-top: 24px">
+          <template #title>
+            <strong>核心服务将自动安装</strong>
+          </template>
+          <div style="margin-top: 8px; font-size: 13px; color: #666">
+            系统将自动安装 Nginx 反向代理、SSL 证书、动态域名解析等核心服务。<br/>
+            网络访问配置可在进入管理面板后完成。
           </div>
-        </el-checkbox-group>
+        </el-alert>
       </div>
 
-      <!-- Step 3: 设置密码 -->
-      <div v-if="step === 3">
+      <!-- Step 1: 管理密码 + 部署 -->
+      <div v-if="step === 1" class="step-content">
         <el-form label-width="120px">
-          <el-form-item label="管理密码">
-            <el-input v-model="config.admin_password" type="password" show-password placeholder="设置管理面板密码" />
+          <el-form-item label="管理密码" required>
+            <el-input v-model="config.admin_password" type="password" show-password placeholder="设置管理面板密码（至少 8 位）" size="large" />
+            <div class="form-help">用于登录 EasyServer 管理面板</div>
           </el-form-item>
           <el-form-item>
-            <el-button @click="generatePassword">生成随机密码</el-button>
+            <el-button @click="generatePassword" :loading="generatingPwd">生成随机密码</el-button>
           </el-form-item>
         </el-form>
+
+        <!-- 部署状态 -->
+        <div v-if="deploying || deployed" class="deploy-section">
+          <div v-if="deploying" class="deploy-status">
+            <el-icon class="is-loading" :size="48" color="#409EFF"><Loading /></el-icon>
+            <h3>正在部署核心服务...</h3>
+            <p class="deploy-hint">将安装 Nginx、SSL 证书、动态域名解析</p>
+            <div class="deploy-log">
+              <div v-for="(log, i) in deployLogs" :key="i" class="log-line">
+                <span class="log-time">{{ log.time }}</span>
+                <span :class="log.type">{{ log.message }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="deployed" class="deploy-status">
+            <el-icon :size="48" color="#67C23A"><SuccessFilled /></el-icon>
+            <h3>部署完成！</h3>
+            <p class="deploy-hint">核心服务已安装，请在管理面板中配置网络访问</p>
+            <div class="deploy-summary">
+              <el-tag type="success" size="large">Nginx 反向代理</el-tag>
+              <el-tag type="success" size="large">SSL 证书管理</el-tag>
+              <el-tag type="success" size="large">动态域名解析</el-tag>
+            </div>
+            <el-button type="primary" size="large" @click="goToLogin" style="margin-top: 24px">
+              登录管理面板
+            </el-button>
+          </div>
+        </div>
       </div>
 
-      <!-- Step 4: 部署 -->
-      <div v-if="step === 4">
-        <div v-if="deploying" class="deploy-status">
-          <el-icon class="is-loading" :size="40"><Loading /></el-icon>
-          <p>正在部署，请稍候...</p>
-          <div class="deploy-log">{{ deployLog }}</div>
-        </div>
-        <div v-else-if="deployed" class="deploy-status">
-          <el-icon :size="40" color="#67C23A"><SuccessFilled /></el-icon>
-          <p>部署完成！</p>
-          <el-button type="primary" @click="$router.push('/dashboard')">进入管理面板</el-button>
-        </div>
-      </div>
-
-      <div class="wizard-footer" v-if="step < 4">
-        <el-button @click="step--" :disabled="step === 0">上一步</el-button>
-        <el-button type="primary" @click="nextStep" :disabled="!canNext">下一步</el-button>
-      </div>
-      <div class="wizard-footer" v-if="step === 4 && !deployed && !deploying">
-        <el-button type="success" @click="startDeploy">开始部署</el-button>
+      <!-- 底部按钮 -->
+      <div class="wizard-footer" v-if="!deploying && !deployed">
+        <el-button @click="step--" :disabled="step === 0" size="large">上一步</el-button>
+        <el-button v-if="step === 0" type="primary" @click="step++" :disabled="!config.domain || !config.ssl_email" size="large">下一步</el-button>
+        <el-button v-if="step === 1" type="success" @click="startDeploy" :disabled="config.admin_password.length < 8" :loading="deploying" size="large">
+          开始部署
+        </el-button>
       </div>
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading, SuccessFilled } from '@element-plus/icons-vue'
@@ -98,82 +94,178 @@ import api from '../api'
 
 const router = useRouter()
 const step = ref(0)
-const availableModules = ref([])
 const deploying = ref(false)
 const deployed = ref(false)
-const deployLog = ref('')
+const generatingPwd = ref(false)
+const deployLogs = ref([])
 
 const config = ref({
-  domain: '', ssl_email: '', access_mode: 'domain',
-  selected_services: ['nginx'], admin_password: ''
+  domain: '',
+  ssl_email: '',
+  admin_password: ''
 })
-
-const canNext = computed(() => {
-  if (step.value === 0) return config.value.domain && config.value.ssl_email
-  if (step.value === 1) return !!config.value.access_mode
-  if (step.value === 2) return config.value.selected_services.length > 0
-  if (step.value === 3) return config.value.admin_password.length >= 8
-  return true
-})
-
-const nextStep = () => { step.value++ }
-
-const loadModules = async () => {
-  try {
-    const { data } = await api.get('/modules')
-    const allModules = []
-    for (const cat of (data.categories || [])) {
-      for (const mod of (cat.modules || [])) {
-        allModules.push({ ...mod, category: cat.id })
-      }
-    }
-    availableModules.value = allModules.filter(m => m.id !== 'nginx')
-  } catch (e) {}
-}
 
 const generatePassword = async () => {
+  generatingPwd.value = true
   try {
     const { data } = await api.post('/config/generate-password')
     config.value.admin_password = data.password
+    ElMessage.success('密码已生成')
   } catch (e) {
     config.value.admin_password = Math.random().toString(36).slice(-16)
   }
+  generatingPwd.value = false
+}
+
+const addLog = (message, type = 'info') => {
+  const now = new Date()
+  const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
+  deployLogs.value.push({ time, message, type })
 }
 
 const startDeploy = async () => {
   deploying.value = true
-  deployLog.value = '正在保存配置...\n'
+  deployLogs.value = []
+
+  addLog('正在保存配置...', 'info')
   try {
-    await api.put('/config', {
+    const { data } = await api.post('/config/setup', {
       domain: config.value.domain,
-      access_mode: config.value.access_mode,
-      ssl_email: config.value.ssl_email
+      ssl_email: config.value.ssl_email,
+      admin_password: config.value.admin_password
     })
-    deployLog.value += '配置已保存\n'
-    for (const svcId of config.value.selected_services) {
-      deployLog.value += `安装 ${svcId}...\n`
-      await api.post('/modules/install', { module_id: svcId, config: {} })
-      deployLog.value += `${svcId} 安装完成\n`
+
+    addLog('配置已保存', 'success')
+
+    if (data.install_results) {
+      for (const result of data.install_results) {
+        if (result.success) {
+          addLog(`${result.module} 安装成功`, 'success')
+        } else {
+          addLog(`${result.module} 安装失败: ${result.error}`, 'error')
+        }
+      }
     }
-    deployLog.value += '生成 Nginx 配置...\n'
-    await api.post('/nginx/generate')
-    await api.post('/config/setup/complete')
-    deployLog.value += '部署完成！\n'
+
+    addLog('部署完成！', 'success')
     deployed.value = true
   } catch (e) {
-    deployLog.value += `错误: ${e.response?.data?.detail || e.message}\n`
+    addLog(`部署失败: ${e.response?.data?.detail || e.message}`, 'error')
     deploying.value = false
   }
 }
 
-onMounted(loadModules)
+const goToLogin = () => {
+  router.push('/login')
+}
 </script>
 
 <style scoped>
-.setup-wizard { display: flex; justify-content: center; padding: 40px 20px; }
-.wizard-card { max-width: 700px; width: 100%; }
-.module-checkbox { padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
-.wizard-footer { margin-top: 24px; display: flex; justify-content: center; gap: 12px; }
-.deploy-status { text-align: center; padding: 20px; }
-.deploy-log { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 6px; margin-top: 16px; text-align: left; font-size: 12px; line-height: 1.6; max-height: 200px; overflow: auto; white-space: pre-wrap; }
+.setup-wizard {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px;
+  min-height: calc(100vh - 60px);
+}
+
+.wizard-card {
+  max-width: 640px;
+  width: 100%;
+  height: fit-content;
+}
+
+.wizard-subtitle {
+  text-align: center;
+  color: #909399;
+  margin-bottom: 32px;
+  font-size: 14px;
+}
+
+.step-content {
+  min-height: 260px;
+  padding: 20px 0;
+}
+
+.form-help {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.form-help a {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.form-help a:hover {
+  text-decoration: underline;
+}
+
+.deploy-section {
+  margin-top: 32px;
+  padding: 24px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.deploy-status {
+  text-align: center;
+}
+
+.deploy-status h3 {
+  margin: 16px 0 8px;
+  color: #303133;
+}
+
+.deploy-hint {
+  color: #909399;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.deploy-log {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 16px;
+  border-radius: 6px;
+  text-align: left;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 16px;
+}
+
+.log-line {
+  display: flex;
+  gap: 12px;
+}
+
+.log-time {
+  color: #909399;
+  flex-shrink: 0;
+}
+
+.log-line .success { color: #67c23a; }
+.log-line .error { color: #f56c6c; }
+.log-line .info { color: #d4d4d4; }
+
+.deploy-summary {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+
+.wizard-footer {
+  margin-top: 32px;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding-top: 24px;
+  border-top: 1px solid #ebeef5;
+}
 </style>

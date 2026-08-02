@@ -1,8 +1,11 @@
 <template>
-  <div class="services-page">
+  <div class="services-page" v-loading="loading">
     <div style="display: flex; justify-content: space-between; align-items: center">
       <h2>服务管理</h2>
       <el-tag type="info" size="large">共 {{ services.length }} 个服务，{{ services.filter(s => s.status === 'running').length }} 个运行中</el-tag>
+      <el-button @click="loadServices" :loading="loading" style="margin-left: 8px">
+        <el-icon><Refresh /></el-icon> 刷新
+      </el-button>
     </div>
 
     <!-- 端口冲突警告 -->
@@ -18,7 +21,7 @@
     <el-alert v-else-if="portCheckDone" type="success" show-icon :closable="true" style="margin-bottom: 16px" title="端口检测正常，无冲突" />
 
     <el-row :gutter="16">
-      <el-col :span="8" v-for="svc in services" :key="svc.id" style="margin-bottom: 16px">
+      <el-col :xs="24" :sm="12" :md="8" v-for="svc in services" :key="svc.id" style="margin-bottom: 16px">
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
@@ -58,7 +61,7 @@
     </el-row>
 
     <!-- 日志弹窗 -->
-    <el-dialog v-model="logVisible" :title="logTitle + ' - 日志'" width="700px" top="5vh">
+    <el-dialog v-model="logVisible" :title="logTitle + ' - 日志'" :width="isMobile ? '95%' : '700px'" top="5vh">
       <pre class="log-content">{{ logContent }}</pre>
       <template #footer>
         <el-button @click="logVisible = false">关闭</el-button>
@@ -69,12 +72,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Edit } from '@element-plus/icons-vue'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Edit, Refresh } from '@element-plus/icons-vue'
 import api from '../api'
 
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
+onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
+
 const services = ref([])
+const loading = ref(false)
 const logVisible = ref(false)
 const logTitle = ref('')
 const logContent = ref('')
@@ -105,6 +114,7 @@ const buildAccessUrl = (svc) => {
 }
 
 const loadServices = async () => {
+  loading.value = true
   try {
     await loadDomain()
     const { data } = await api.get('/services')
@@ -126,7 +136,8 @@ const loadServices = async () => {
     services.value.forEach(svc => {
       svc.accessUrl = buildAccessUrl(svc)
     })
-  } catch (e) { ElMessage.error('加载服务列表失败') }
+  } catch (e) { ElMessage.error('服务状态获取失败，请稍后重试') }
+  finally { loading.value = false }
 }
 
 const checkPorts = async () => {
@@ -164,9 +175,30 @@ const openUrl = (url) => {
 }
 
 const doAction = async (id, action) => {
+  // 危险操作二次确认
+  if (action === 'stop') {
+    try {
+      await ElMessageBox.confirm(
+        `确定停止 ${id}？${id === 'nginx' ? '\n停止 Nginx 将导致所有域名反代服务无法访问！' : ''}`,
+        '确认停止',
+        { type: 'warning' }
+      )
+    } catch { return }
+  }
+  if (action === 'restart') {
+    try {
+      await ElMessageBox.confirm(`确定重启 ${id}？`, '确认重启')
+    } catch { return }
+  }
+  if (action === 'update') {
+    try {
+      await ElMessageBox.confirm(`确定更新 ${id}？更新过程中服务可能短暂不可用。`, '确认更新')
+    } catch { return }
+  }
   try {
     const { data } = await api.post(`/services/${id}/${action}`)
-    ElMessage.success(`${id} ${action} 成功`)
+    const actionLabel = { start: '启动', stop: '停止', restart: '重启', update: '更新' }
+    ElMessage.success(`${id} ${actionLabel[action] || action} 成功`)
     loadServices()
   } catch (e) { ElMessage.error(`操作失败: ${e.response?.data?.detail || e.message}`) }
 }

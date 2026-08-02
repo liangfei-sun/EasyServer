@@ -11,6 +11,7 @@ import os
 import shutil
 
 from .routes import services, config, modules, nginx, docs, backup
+from .core.auth import AuthMiddleware
 
 app = FastAPI(
     title="EasyServer API",
@@ -43,6 +44,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 鉴权中间件
+app.add_middleware(AuthMiddleware)
 
 # 注册路由
 app.include_router(services.router)

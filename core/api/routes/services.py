@@ -9,8 +9,9 @@ from ..core.docker_manager import DockerManager
 from ..core.module_loader import ModuleLoader
 from ..core.config_manager import ConfigManager
 import os
-import subprocess
 import re
+import asyncio
+import json
 
 router = APIRouter(prefix="/api/services", tags=["services"])
 
@@ -63,9 +64,14 @@ async def port_check():
 
     # 检查系统端口占用
     try:
-        result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True, timeout=5)
+        proc = await asyncio.create_subprocess_exec(
+            "ss", "-tlnp",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
         system_ports = set()
-        for line in result.stdout.strip().split("\n")[1:]:
+        for line in stdout.decode().strip().split("\n")[1:]:
             match = re.search(r':(\d+)\s', line)
             if match:
                 system_ports.add(int(match.group(1)))
@@ -95,8 +101,13 @@ async def update_service_port(module_id: str, port: int):
 
     # 检查端口是否被系统占用
     try:
-        result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True, timeout=5)
-        for line in result.stdout.strip().split("\n")[1:]:
+        proc = await asyncio.create_subprocess_exec(
+            "ss", "-tlnp",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        for line in stdout.decode().strip().split("\n")[1:]:
             match = re.search(r':(\d+)\s', line)
             if match and int(match.group(1)) == port:
                 raise HTTPException(status_code=409, detail=f"端口 {port} 已被系统进程占用")
@@ -133,12 +144,85 @@ async def update_service_port(module_id: str, port: int):
             "message": f"已将 {port_key} 更新为 {port}，请重启服务使其生效"}
 
 
+async def _async_fetch_all_containers() -> list:
+    """异步单次 docker ps 获取所有容器状态"""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "-a", "--format", "json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        containers = []
+        for line in stdout.decode().strip().split('\n'):
+            if line.strip():
+                try:
+                    containers.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return containers
+    except Exception:
+        return []
+
+
+async def _async_get_all_status() -> list:
+    """异步获取所有服务状态，单次 docker ps 替代串行 compose ps"""
+    from ..core.docker_manager import DockerManager
+    from ..core.module_loader import ModuleLoader
+    dm = _get_docker_manager()
+    loader = _get_module_loader()
+    installed = loader.get_installed_modules()
+    env = dm._load_env_dict()
+
+    all_containers = await _async_fetch_all_containers()
+    statuses = []
+    for module in installed:
+        try:
+            prefix = f"easyserver-{module['id']}"
+            containers = []
+            for c in all_containers:
+                name = c.get("Names", "") or c.get("Name", "")
+                if name.startswith(prefix):
+                    containers.append({
+                        "name": name,
+                        "status": c.get("Status", ""),
+                        "state": c.get("State", "")
+                    })
+            running = any(
+                ct.get("state") == "running" or "Up" in ct.get("status", "")
+                for ct in containers
+            ) if containers else False
+            status = {
+                "module": module["id"],
+                "running": running,
+                "containers": containers
+            }
+            access = module.get("access", {})
+            status["name"] = module.get("name", module["id"])
+            status["description"] = module.get("description", "")
+            status["version"] = module.get("version", "")
+            status["icon"] = module.get("icon", "")
+            port = access.get("port")
+            port_env_key = dm._find_port_env_key(module)
+            if port_env_key and port_env_key in env:
+                try:
+                    port = int(env[port_env_key])
+                except (ValueError, TypeError):
+                    pass
+            status["port"] = port
+            status["subdomain"] = access.get("subdomain", "")
+            status["protocol"] = access.get("protocol", "http")
+            statuses.append(status)
+        except Exception as e:
+            statuses.append({"module": module["id"], "name": module.get("name", module["id"]), "running": False, "error": str(e)})
+    return statuses
+
+
 @router.get("")
 async def list_services():
-    """获取所有已安装服务的状态"""
-    dm = _get_docker_manager()
+    """获取所有已安装服务的状态（异步非阻塞）"""
     try:
-        statuses = dm.get_all_status()
+        statuses = await _async_get_all_status()
         return {"services": statuses}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -146,7 +230,7 @@ async def list_services():
 
 @router.get("/{module_id}")
 async def get_service(module_id: str):
-    """获取单个服务的状态"""
+    """获取单个服务的状态（异步）"""
     dm = _get_docker_manager()
     ml = _get_module_loader()
 
@@ -155,7 +239,7 @@ async def get_service(module_id: str):
         raise HTTPException(status_code=404, detail=f"模块 {module_id} 不存在")
 
     try:
-        status = dm.get_module_status(module_id)
+        status = await dm.async_get_module_status(module_id)
         status["metadata"] = module
         return status
     except Exception as e:
@@ -164,11 +248,10 @@ async def get_service(module_id: str):
 
 @router.post("/{module_id}/start")
 async def start_service(module_id: str):
-    """启动指定服务"""
+    """启动指定服务（异步）"""
     dm = _get_docker_manager()
     try:
-        result = dm.start_module(module_id)
-        return result
+        return await dm.async_start_module(module_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -177,11 +260,10 @@ async def start_service(module_id: str):
 
 @router.post("/{module_id}/stop")
 async def stop_service(module_id: str):
-    """停止指定服务"""
+    """停止指定服务（异步）"""
     dm = _get_docker_manager()
     try:
-        result = dm.stop_module(module_id)
-        return result
+        return await dm.async_stop_module(module_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -190,11 +272,10 @@ async def stop_service(module_id: str):
 
 @router.post("/{module_id}/restart")
 async def restart_service(module_id: str):
-    """重启指定服务"""
+    """重启指定服务（异步）"""
     dm = _get_docker_manager()
     try:
-        result = dm.restart_module(module_id)
-        return result
+        return await dm.async_restart_module(module_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -203,11 +284,10 @@ async def restart_service(module_id: str):
 
 @router.post("/{module_id}/update")
 async def update_service(module_id: str):
-    """更新指定服务（拉取最新镜像并重建）"""
+    """更新指定服务（拉取最新镜像并重建，异步）"""
     dm = _get_docker_manager()
     try:
-        result = dm.update_module(module_id)
-        return result
+        return await dm.async_update_module(module_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -216,10 +296,10 @@ async def update_service(module_id: str):
 
 @router.get("/{module_id}/logs")
 async def get_service_logs(module_id: str, lines: int = 100):
-    """获取服务日志"""
+    """获取服务日志（异步）"""
     dm = _get_docker_manager()
     try:
-        logs = dm.get_module_logs(module_id, lines)
+        logs = await dm.async_get_module_logs(module_id, lines)
         return {"module": module_id, "logs": logs}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

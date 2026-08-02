@@ -3,15 +3,16 @@
     <h2>全局设置</h2>
 
     <!-- 区段1: 服务器配置 -->
-    <el-card style="max-width: 700px">
+    <el-card style="max-width: 700px; width: 100%">
       <template #header><span style="font-weight:600">服务器配置</span></template>
       <el-form :model="form" label-width="120px">
         <el-form-item label="域名">
           <el-input v-model="form.domain" placeholder="example.com" />
         </el-form-item>
         <el-form-item label="访问模式">
-          <el-radio-group v-model="form.access_mode">
+          <el-radio-group v-model="form.access_mode" @change="onAccessModeChange">
             <el-radio label="domain">域名反代 (SSL)</el-radio>
+            <el-radio label="cloudflare_tunnel">Cloudflare Tunnel</el-radio>
             <el-radio label="ipv6_direct">IPv6 直连</el-radio>
             <el-radio label="hybrid">混合模式</el-radio>
           </el-radio-group>
@@ -19,26 +20,69 @@
         <el-form-item label="HTTPS 端口">
           <el-input-number v-model="form.https_port" :min="1" :max="65535" />
         </el-form-item>
-        <el-form-item label="SSL 邮箱">
-          <el-input v-model="form.ssl_email" placeholder="admin@example.com" />
-        </el-form-item>
-        <el-form-item label="DNS 提供商">
-          <el-input v-model="form.dns_provider" placeholder="cloudflare / aliyun / ..." />
-        </el-form-item>
-        <el-form-item label="管理面板子域名">
-          <el-input v-model="form.panel_subdomain" placeholder="panel">
-            <template #append>.{{ form.domain }}</template>
-          </el-input>
-        </el-form-item>
+
+        <!-- 域名反代模式：显示 SSL 和 DNS 配置 -->
+        <template v-if="form.access_mode === 'domain' || form.access_mode === 'hybrid'">
+          <el-form-item label="SSL 邮箱">
+            <el-input v-model="form.ssl_email" placeholder="admin@example.com" />
+          </el-form-item>
+          <el-form-item label="DNS 提供商">
+            <el-radio-group v-model="form.dns_provider" @change="onDnsProviderChange">
+              <el-radio label="aliyun">阿里云</el-radio>
+              <el-radio label="cloudflare">Cloudflare</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <!-- 阿里云凭证 -->
+          <template v-if="form.dns_provider === 'aliyun'">
+            <el-form-item label="AccessKey ID">
+              <el-input v-model="dnsCredentials.aliyun.key" placeholder="LTAI5t..." type="password" show-password />
+              <div class="form-help">
+                <a href="https://ram.console.aliyun.com/manage/ak" target="_blank">前往创建</a>
+                ，需授予 AliyunDNSFullAccess 权限
+              </div>
+            </el-form-item>
+            <el-form-item label="AccessKey Secret">
+              <el-input v-model="dnsCredentials.aliyun.secret" placeholder="AccessKey Secret" type="password" show-password />
+            </el-form-item>
+          </template>
+          <!-- Cloudflare 凭证 -->
+          <template v-if="form.dns_provider === 'cloudflare'">
+            <el-form-item label="API Token">
+              <el-input v-model="dnsCredentials.cloudflare.token" placeholder="Cloudflare API Token" type="password" show-password />
+              <div class="form-help">
+                <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank">前往创建</a>
+                ，权限选择 Zone &gt; DNS &gt; Edit
+              </div>
+            </el-form-item>
+          </template>
+          <el-form-item label="管理面板子域名">
+            <el-input v-model="form.panel_subdomain" placeholder="panel">
+              <template #append>.{{ form.domain }}</template>
+            </el-input>
+          </el-form-item>
+        </template>
+
+        <!-- Cloudflare Tunnel 模式：显示 Tunnel Token -->
+        <template v-if="form.access_mode === 'cloudflare_tunnel'">
+          <el-form-item label="Tunnel Token">
+            <el-input v-model="form.cf_tunnel_token" placeholder="Cloudflare Tunnel Token" type="password" show-password />
+            <div class="form-help">
+              在 Cloudflare Zero Trust 面板创建 Tunnel 后获取 Token
+            </div>
+          </el-form-item>
+          <el-alert type="info" :closable="false">
+            Cloudflare Tunnel 自带 SSL、反向代理和 DNS，无需配置 Nginx 和 ACME。
+          </el-alert>
+        </template>
+
         <el-form-item>
-          <el-button type="primary" @click="saveConfig" :loading="saving">保存配置</el-button>
-          <el-button @click="generateNginx" :loading="generating">重新生成 Nginx 配置</el-button>
+          <el-button type="primary" @click="saveConfig" :loading="saving">保存并应用</el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <!-- 区段2: SSL 证书状态 -->
-    <el-card style="max-width: 700px; margin-top: 20px">
+    <el-card v-if="form.access_mode === 'domain' || form.access_mode === 'hybrid'" style="max-width: 700px; width: 100%; margin-top: 20px">
       <template #header><span style="font-weight:600">SSL 证书状态</span></template>
       <div class="ssl-status">
         <el-tag :type="sslValid ? 'success' : 'warning'" size="large">{{ sslValid ? '有效' : '未配置' }}</el-tag>
@@ -48,7 +92,7 @@
     </el-card>
 
     <!-- 区段3: 容器资源管理 -->
-    <el-card style="max-width: 700px; margin-top: 20px">
+    <el-card style="max-width: 700px; width: 100%; margin-top: 20px">
       <template #header><span style="font-weight:600">容器资源管理</span></template>
       <el-form :model="resourceForm" label-width="140px">
         <el-form-item label="CPU 限制 (核)">
@@ -74,80 +118,8 @@
       </el-form>
     </el-card>
 
-    <!-- 区段4: 系统服务状态 -->
-    <el-card style="max-width: 700px; margin-top: 20px">
-      <template #header>
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <span style="font-weight:600">系统服务状态</span>
-          <el-button size="small" @click="loadServices" :loading="loadingServices">刷新</el-button>
-        </div>
-      </template>
-      <div v-if="services.length === 0" style="color:#999;text-align:center;padding:20px">暂无已安装的服务</div>
-      <el-table v-else :data="services" stripe size="small" style="width:100%">
-        <el-table-column prop="module" label="服务" width="150" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.running ? 'success' : 'danger'" size="small">
-              {{ row.running ? '运行中' : '已停止' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="280">
-          <template #default="{ row }">
-            <el-button-group>
-              <el-button size="small" type="success" @click="doServiceAction(row.module, 'start')" :disabled="row.running">启动</el-button>
-              <el-button size="small" type="warning" @click="doServiceAction(row.module, 'stop')" :disabled="!row.running">停止</el-button>
-              <el-button size="small" type="primary" @click="doServiceAction(row.module, 'restart')" :disabled="!row.running">重启</el-button>
-              <el-button size="small" @click="viewLogs(row.module)">日志</el-button>
-            </el-button-group>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <!-- 区段5: 备份管理 -->
-    <el-card style="max-width: 700px; margin-top: 20px">
-      <template #header>
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <span style="font-weight:600">备份管理</span>
-          <el-button size="small" @click="loadBackupStatus" :loading="backupLoading">刷新状态</el-button>
-        </div>
-      </template>
-      <div v-if="!backupStatus.initialized" style="color:#999;text-align:center;padding:20px">
-        备份模块未安装或未初始化，请先在模块市场安装「数据备份」模块。
-      </div>
-      <template v-else>
-        <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="上次备份">{{ backupStatus.last_backup ? new Date(backupStatus.last_backup).toLocaleString() : '无' }}</el-descriptions-item>
-          <el-descriptions-item label="仓库大小">{{ backupStatus.total_size_mb }} MB</el-descriptions-item>
-          <el-descriptions-item label="快照数量">{{ backupStatus.snapshots ? backupStatus.snapshots.length : 0 }} 个（显示最近10个）</el-descriptions-item>
-          <el-descriptions-item label="备份周期">{{ backupScheduleLabel }}</el-descriptions-item>
-        </el-descriptions>
-        <div style="margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
-          <el-button type="primary" @click="doBackup" :loading="backupTriggering">立即备份</el-button>
-          <el-select v-model="backupForm.schedule" style="width: 180px" placeholder="备份周期">
-            <el-option value="0 2 * * *" label="每天凌晨2点" />
-            <el-option value="0 2 * * 0" label="每周日凌晨2点" />
-            <el-option value="0 2 1 * *" label="每月1日凌晨2点" />
-            <el-option value="0 */6 * * *" label="每6小时" />
-          </el-select>
-          <el-input-number v-model="backupForm.retain_days" :min="1" :max="90" style="width: 120px" placeholder="保留天数" />
-          <el-button @click="saveBackupSchedule" :loading="backupSaving">保存计划</el-button>
-        </div>
-        <el-table v-if="backupStatus.snapshots && backupStatus.snapshots.length > 0" :data="backupStatus.snapshots" stripe size="small" style="width:100%; margin-top: 16px">
-          <el-table-column label="时间" width="180">
-            <template #default="{ row }">{{ new Date(row.time).toLocaleString() }}</template>
-          </el-table-column>
-          <el-table-column prop="hostname" label="主机" width="120" />
-          <el-table-column label="标签" min-width="150">
-            <template #default="{ row }">{{ (row.tags || []).join(', ') }}</template>
-          </el-table-column>
-        </el-table>
-      </template>
-    </el-card>
-
     <!-- 日志弹窗 -->
-    <el-dialog v-model="logVisible" :title="'日志 - ' + logModule" width="700px" top="5vh">
+    <el-dialog v-model="logVisible" :title="'日志 - ' + logModule" :width="isMobile ? '95%' : '700px'" top="5vh">
       <pre class="log-content">{{ logContent }}</pre>
       <template #footer>
         <el-button @click="logVisible = false">关闭</el-button>
@@ -158,14 +130,25 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
+onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
+
 // ===== 区段1: 服务器配置 =====
-const form = ref({ domain: '', access_mode: 'domain', https_port: 8443, ssl_email: '', dns_provider: '', panel_subdomain: 'panel' })
+const form = ref({
+  domain: '', access_mode: 'domain', https_port: 8443, ssl_email: '',
+  dns_provider: 'aliyun', panel_subdomain: 'panel', cf_tunnel_token: ''
+})
+const dnsCredentials = ref({
+  aliyun: { key: '', secret: '' },
+  cloudflare: { token: '' }
+})
 const saving = ref(false)
-const generating = ref(false)
 
 const loadConfig = async () => {
   try {
@@ -176,8 +159,18 @@ const loadConfig = async () => {
     form.value.access_mode = env.ACCESS_MODE || cfg.access_mode || 'domain'
     form.value.https_port = parseInt(env.HTTPS_PORT) || cfg.https_port || 8443
     form.value.ssl_email = cfg.ssl_email || ''
-    form.value.dns_provider = cfg.dns_provider || ''
+    form.value.dns_provider = cfg.dns_provider || 'aliyun'
     form.value.panel_subdomain = cfg.panel_subdomain || 'panel'
+    form.value.cf_tunnel_token = cfg.cf_tunnel_token || ''
+    // 加载 DNS 凭证（脱敏后的值）
+    if (data.dns_credentials) {
+      if (data.dns_credentials.aliyun) {
+        dnsCredentials.value.aliyun = data.dns_credentials.aliyun
+      }
+      if (data.dns_credentials.cloudflare) {
+        dnsCredentials.value.cloudflare = data.dns_credentials.cloudflare
+      }
+    }
     // 加载资源配置
     resourceForm.value.cpu_limit = cfg.cpu_limit || 2.0
     resourceForm.value.memory_limit = cfg.memory_limit || 2048
@@ -187,22 +180,37 @@ const loadConfig = async () => {
   } catch (e) { ElMessage.error('加载配置失败') }
 }
 
+const onAccessModeChange = () => {
+  // 切换访问模式时提示
+}
+
+const onDnsProviderChange = () => {
+  if (form.value.dns_provider === 'aliyun') {
+    dnsCredentials.value.cloudflare.token = ''
+  } else if (form.value.dns_provider === 'cloudflare') {
+    dnsCredentials.value.aliyun.key = ''
+    dnsCredentials.value.aliyun.secret = ''
+  }
+}
+
 const saveConfig = async () => {
   saving.value = true
   try {
-    await api.put('/config', form.value)
-    ElMessage.success('配置已保存')
+    const saveData = { ...form.value }
+    // 域名反代模式附带 DNS 凭证
+    if (form.value.access_mode === 'domain' || form.value.access_mode === 'hybrid') {
+      saveData.dns_credentials = {
+        [form.value.dns_provider]: dnsCredentials.value[form.value.dns_provider]
+      }
+    }
+    await api.put('/config', saveData)
+    // 域名模式自动重新生成 Nginx 配置
+    if (form.value.access_mode === 'domain' || form.value.access_mode === 'hybrid') {
+      try { await api.post('/nginx/generate') } catch {}
+    }
+    ElMessage.success('配置已保存并应用')
   } catch (e) { ElMessage.error('保存失败') }
   saving.value = false
-}
-
-const generateNginx = async () => {
-  generating.value = true
-  try {
-    await api.post('/nginx/generate')
-    ElMessage.success('Nginx 配置已重新生成')
-  } catch (e) { ElMessage.error('生成失败') }
-  generating.value = false
 }
 
 // ===== 区段2: SSL 证书状态 =====
@@ -226,11 +234,8 @@ const checkSSL = async () => {
 
 // ===== 区段3: 容器资源管理 =====
 const resourceForm = ref({
-  cpu_limit: 2.0,
-  memory_limit: 2048,
-  auto_restart: true,
-  log_retention_days: 7,
-  auto_cleanup: false
+  cpu_limit: 2.0, memory_limit: 2048, auto_restart: true,
+  log_retention_days: 7, auto_cleanup: false
 })
 const savingResources = ref(false)
 const cleaning = ref(false)
@@ -258,35 +263,10 @@ const cleanupDocker = async () => {
   cleaning.value = false
 }
 
-// ===== 区段4: 系统服务状态 =====
-const services = ref([])
-const loadingServices = ref(false)
+// ===== 区段4: 日志查看 =====
 const logVisible = ref(false)
 const logModule = ref('')
 const logContent = ref('')
-
-const loadServices = async () => {
-  loadingServices.value = true
-  try {
-    const { data } = await api.get('/services')
-    services.value = data.services || []
-  } catch (e) { ElMessage.error('加载服务列表失败') }
-  loadingServices.value = false
-}
-
-const doServiceAction = async (moduleId, action) => {
-  try {
-    const { data } = await api.post(`/services/${moduleId}/${action}`)
-    if (data.success !== false) {
-      ElMessage.success(`${moduleId} ${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'}成功`)
-    } else {
-      ElMessage.error(data.error || '操作失败')
-    }
-    loadServices()
-  } catch (e) {
-    ElMessage.error(`操作失败: ${e.response?.data?.detail || e.message}`)
-  }
-}
 
 const viewLogs = async (moduleId) => {
   logModule.value = moduleId
@@ -302,70 +282,12 @@ const viewLogs = async (moduleId) => {
 onMounted(() => {
   loadConfig()
   checkSSL()
-  loadServices()
-  loadBackupStatus()
 })
-
-// ===== 区段5: 备份管理 =====
-const backupStatus = ref({ initialized: false, snapshots: [], last_backup: '', total_size_mb: 0 })
-const backupLoading = ref(false)
-const backupTriggering = ref(false)
-const backupSaving = ref(false)
-const backupForm = ref({ schedule: '0 2 * * *', retain_days: 7 })
-
-const backupScheduleMap = {
-  '0 2 * * *': '每天凌晨2点',
-  '0 2 * * 0': '每周日凌晨2点',
-  '0 2 1 * *': '每月1日凌晨2点',
-  '0 */6 * * *': '每6小时'
-}
-const backupScheduleLabel = computed(() => backupScheduleMap[backupForm.value.schedule] || backupForm.value.schedule)
-
-const loadBackupStatus = async () => {
-  backupLoading.value = true
-  try {
-    const { data } = await api.get('/backup/status')
-    backupStatus.value = data
-  } catch (e) {
-    // 接口不存在或模块未安装，保持默认值
-  }
-  backupLoading.value = false
-}
-
-const doBackup = async () => {
-  try {
-    await ElMessageBox.confirm('确定立即执行一次全量备份？', '确认备份')
-  } catch { return }
-  backupTriggering.value = true
-  try {
-    const { data } = await api.post('/backup/trigger')
-    if (data.success) {
-      ElMessage.success('备份完成')
-      loadBackupStatus()
-    } else {
-      ElMessage.error('备份失败: ' + (data.error || '未知错误'))
-    }
-  } catch (e) {
-    ElMessage.error('备份失败: ' + (e.response?.data?.detail || e.message))
-  }
-  backupTriggering.value = false
-}
-
-const saveBackupSchedule = async () => {
-  backupSaving.value = true
-  try {
-    await api.put('/backup/schedule', { schedule: backupForm.value.schedule, retain_days: backupForm.value.retain_days })
-    ElMessage.success('备份计划已更新')
-  } catch (e) {
-    ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message))
-  }
-  backupSaving.value = false
-}
 </script>
 
 <style scoped>
 .settings-page { max-width: 800px; }
-.ssl-status { display: flex; align-items: center; }
+.ssl-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .log-content {
   background: #1e1e1e;
   color: #d4d4d4;
@@ -377,5 +299,26 @@ const saveBackupSchedule = async () => {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+@media (max-width: 768px) {
+  .ssl-status { flex-direction: column; align-items: flex-start; }
+  .ssl-status > .el-button { margin-left: 0 !important; }
+}
+
+.form-help {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.form-help a {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.form-help a:hover {
+  text-decoration: underline;
 }
 </style>

@@ -64,7 +64,23 @@ class ConfigManager:
         self.save_config(config)
 
     def _default_config(self) -> dict:
-        return {"domain": "", "access_mode": "domain", "https_port": 8443, "ssl_email": "", "dns_provider": "aliyun", "panel_subdomain": "panel", "installed_modules": [], "setup_completed": False}
+        return {
+            "domain": "",
+            "access_mode": "domain",
+            "https_port": 8443,
+            "ssl_email": "",
+            "dns_provider": "aliyun",
+            "panel_subdomain": "panel",
+            "installed_modules": [],
+            "setup_completed": False,
+            "network_configured": False,
+            "admin_password_hash": "",
+            # DNS 凭证存储（加密字段，API 层脱敏返回）
+            "dns_credentials": {
+                "aliyun": {"key": "", "secret": ""},
+                "cloudflare": {"token": ""}
+            }
+        }
 
     def load_env(self) -> dict:
         if not self.env_file.exists():
@@ -88,6 +104,25 @@ class ConfigManager:
 
     def mark_setup_completed(self):
         self.set_config_value("setup_completed", True)
+
+    def is_network_configured(self) -> bool:
+        return self.get_config_value("network_configured", False)
+
+    def mark_network_configured(self):
+        self.set_config_value("network_configured", True)
+
+    def verify_password(self, password: str) -> bool:
+        """验证管理密码"""
+        stored_hash = self.get_config_value("admin_password_hash", "")
+        if not stored_hash:
+            return False
+        import hashlib
+        return hashlib.sha256(password.encode()).hexdigest() == stored_hash
+
+    def set_admin_password(self, password: str):
+        """设置管理密码（存储 SHA256 哈希）"""
+        import hashlib
+        self.set_config_value("admin_password_hash", hashlib.sha256(password.encode()).hexdigest())
 
     def get_installed_modules(self) -> list:
         return self.get_config_value("installed_modules", [])

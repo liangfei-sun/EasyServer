@@ -2,14 +2,10 @@
 
 services:
   backup:
-    image: restic/restic:latest
+    build: .
+    image: easyserver-backup:latest
     container_name: easyserver-backup
-    entrypoint: ["/scripts/entrypoint.sh"]
-    volumes:
-      - ${DATA_DIR}:/data:ro
-      - ${DATA_DIR}/backups:/backups
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/.env:/config/.env:ro
-      - ./scripts:/scripts:ro
+    restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
       - RESTIC_REPOSITORY=/backups/restic-repo
@@ -20,9 +16,19 @@ services:
       - BACKUP_CLOUD_BUCKET=${BACKUP_CLOUD_BUCKET:-}
       - BACKUP_CLOUD_KEY=${BACKUP_CLOUD_KEY:-}
       - BACKUP_CLOUD_SECRET=${BACKUP_CLOUD_SECRET:-}
-    restart: unless-stopped
+    volumes:
+      - ${DATA_DIR}:/data:ro
+      - ${DATA_DIR}/backups:/backups
+      - ${PROJECT_ROOT:-/home/lf/easyserver}/.env:/config/.env:ro
+      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/backup/scripts:/scripts:ro
+    networks:
+      - easyserver-proxy
     logging:
       driver: "json-file"
       options:
         max-size: "5m"
         max-file: "3"
+
+networks:
+  easyserver-proxy:
+    external: true

@@ -134,9 +134,18 @@ docker exec easyserver-nginx nginx -t
 
 ## 数据备份与恢复
 
-### 备份
+### 备份中心
 
-EasyServer 的所有持久化数据存储在 `data/` 目录下，备份此目录即可。
+EasyServer 提供内置备份中心，支持本地和云端备份：
+
+- **本地备份**：基于 restic 增量备份，存储在 `data/backups/restic-repo`
+- **云端备份**：支持阿里云 OSS、AWS S3、Backblaze B2
+- **自动备份**：可配置每日/每周/每月自动备份
+- **快照恢复**：任意历史快照一键恢复
+
+### 手动备份
+
+也可手动备份 `data/` 目录：
 
 ```bash
 # 完整备份（推荐定期执行）
@@ -187,8 +196,17 @@ docker compose up -d
 ### 管理面板打不开？
 
 1. 确认管理引擎容器正在运行：`docker ps | grep easyserver-core`
-2. 检查端口 9800 是否被占用
+2. 检查 HTTPS 端口是否正确（在「全局设置」中查看）
 3. 查看引擎日志：`docker logs easyserver-core`
+
+### 修改端口后外网无法访问？
+
+修改 HTTPS 端口后，请检查：
+1. 路由器端口转发规则是否同步更新为新端口
+2. 防火墙是否放行了新端口
+3. 运营商是否封锁了该端口（国内运营商通常封锁 443 和 80）
+
+> 提示：IPv6 直连时 443 端口通常可用，IPv4 端口转发时建议先用 8443 测试。
 
 ### 如何更新 EasyServer？
 

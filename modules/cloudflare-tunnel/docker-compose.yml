@@ -3,7 +3,7 @@
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: easyserver-cloudflared
+    container_name: easyserver-cloudflare-tunnel
     network_mode: host
     command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
     environment:

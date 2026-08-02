@@ -202,13 +202,14 @@ resources:
 
 ### 必须遵守的规范
 
-1. **容器名**：统一前缀 `easyserver-`，如 `easyserver-nextcloud`
+1. **容器名**：统一前缀 `easyserver-`，格式为 `easyserver-{module_id}`，确保服务发现机制能正确识别
 2. **数据路径**：使用 `${DATA_DIR}/<module>/` 变量
-3. **端口绑定**：使用 `${BIND_ADDRESS:-127.0.0.1}` 变量，支持访问模式切换
-4. **日志限制**：必须添加 `max-size: "10m"`, `max-file: "3"`
-5. **时区**：统一 `TZ=Asia/Shanghai`
-6. **安全选项**：添加 `no-new-privileges:true`
-7. **网络**：非 host 模式需添加独立网络和共享反代网络
+3. **宿主机路径**：涉及宿主机路径挂载时，必须使用 `${PROJECT_ROOT:-/home/lf/easyserver}` 前缀的绝对路径，禁止使用 `./` 相对路径（因为管理引擎从容器内执行 docker compose，相对路径会解析错误）
+4. **端口绑定**：使用 `${BIND_ADDRESS:-127.0.0.1}` 变量，支持访问模式切换
+5. **日志限制**：必须添加 `max-size: "10m"`, `max-file: "3"`
+6. **时区**：统一 `TZ=Asia/Shanghai`
+7. **安全选项**：添加 `no-new-privileges:true`
+8. **网络**：非 host 模式需添加独立网络和共享反代网络
 
 ### 端口绑定与访问模式
 

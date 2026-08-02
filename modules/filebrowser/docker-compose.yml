@@ -9,7 +9,7 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${FILEBROWSER_PORT:-8081}:80"
     command: ["--database", "/db/filebrowser.db", "--address", "0.0.0.0"]
     volumes:
-      - ${FILEBROWSER_DATA_PATH:-./data/filebrowser/files}:/srv/data
+      - ${FILEBROWSER_DATA_PATH:-${DATA_DIR}/filebrowser/files}:/srv/data
       - ${DATA_DIR}/filebrowser-db:/db
     environment:
       - TZ=Asia/Shanghai

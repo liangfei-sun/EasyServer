@@ -19,6 +19,7 @@ build/
 node_modules/
 .npm-cache/
 core/web/dist/
+core/web/dist_old/
 core/web/node_modules/
 .nuxt/
 .output/

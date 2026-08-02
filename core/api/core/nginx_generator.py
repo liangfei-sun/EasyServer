@@ -91,3 +91,8 @@ class NginxGenerator:
     def reload_nginx(self) -> bool:
         result = subprocess.run(["docker", "exec", "easyserver-nginx", "nginx", "-s", "reload"], capture_output=True, text=True)
         return result.returncode == 0
+
+    def restart_nginx(self) -> bool:
+        """重启 Nginx 容器（端口变更时需要）"""
+        result = subprocess.run(["docker", "restart", "easyserver-nginx"], capture_output=True, text=True)
+        return result.returncode == 0

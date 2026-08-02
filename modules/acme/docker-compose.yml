@@ -1,4 +1,5 @@
 # EasyServer - ACME SSL 证书模块
+# 支持阿里云 (dns_ali) 和 Cloudflare (dns_cf) 两种 DNS 提供商
 
 services:
   acme.sh:
@@ -7,13 +8,16 @@ services:
     command: daemon
     volumes:
       - ${DATA_DIR}/acme/data:/acme.sh
-      - ../../modules/nginx/acme-challenge:/acme-challenge
-      - ../../modules/nginx/ssl:/etc/nginx/ssl
+      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/acme-challenge:/acme-challenge
+      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/ssl:/etc/nginx/ssl
     network_mode: host
     environment:
       - TZ=Asia/Shanghai
-      - Ali_Key=${ACME_ALI_KEY}
-      - Ali_Secret=${ACME_ALI_SECRET}
+      # 阿里云凭证（dns_provider=aliyun 时使用）
+      - Ali_Key=${ACME_ALI_KEY:-}
+      - Ali_Secret=${ACME_ALI_SECRET:-}
+      # Cloudflare 凭证（dns_provider=cloudflare 时使用）
+      - CF_Token=${ACME_CF_TOKEN:-}
     restart: unless-stopped
     logging:
       driver: "json-file"

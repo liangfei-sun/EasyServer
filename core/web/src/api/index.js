@@ -1,6 +1,47 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 
 const api = axios.create({ baseURL: '/api', timeout: 30000 })
+
+// 请求拦截器：自动附加 Authorization header
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('easyserver_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 响应拦截器：统一错误处理
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response) {
+      const { status, data } = error.response
+      if (status === 401) {
+        // Token 过期或无效，清除并跳转登录
+        localStorage.removeItem('easyserver_token')
+        // 避免在登录/setup 页面重复跳转
+        const currentPath = window.location.hash?.replace('#', '') || ''
+        if (!['/login', '/setup'].includes(currentPath)) {
+          ElMessage.warning('登录已过期，请重新登录')
+          window.location.hash = '#/login'
+        }
+        return Promise.reject(error)
+      }
+      // 显示后端返回的错误信息
+      const detail = data?.detail
+      if (detail && typeof detail === 'string') {
+        ElMessage.error(detail)
+      }
+    } else if (error.code === 'ECONNABORTED') {
+      ElMessage.error('请求超时，请检查服务是否运行正常')
+    } else if (!error.response) {
+      ElMessage.error('网络异常，请检查服务是否运行正常')
+    }
+    return Promise.reject(error)
+  }
+)
 
 export const getServices = () => api.get('/services')
 export const getService = (id) => api.get(`/services/${id}`)
