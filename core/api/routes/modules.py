@@ -106,16 +106,24 @@ async def install_module(request: InstallRequest):
     # 标记为已安装
     cm.add_installed_module(module_id)
 
-    # 启动模块
+    # 启动模块（异步，不阻塞事件循环）
     try:
-        result = dm.start_module(module_id)
+        result = await dm.async_start_module(module_id)
     except Exception as e:
-        return {
-            "success": False,
-            "module": module_id,
-            "error": str(e),
-            "message": "模块已注册但启动失败，请检查配置"
-        }
+        # 启动失败，回滚安装状态
+        cm.remove_installed_module(module_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"模块启动失败: {str(e)}"
+        )
+
+    if not result.get("success"):
+        # Docker 命令返回非零，回滚安装状态
+        cm.remove_installed_module(module_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"模块启动失败: {result.get('error', '未知错误')}"
+        )
 
     # 更新 Nginx 配置
     _update_nginx_config(cm, ml)
@@ -134,11 +142,12 @@ async def uninstall_module(module_id: str):
     dm = _get_docker_manager()
     ml = _get_module_loader()
 
-    # 停止模块
+    # 停止模块（异步）
+    stop_error = None
     try:
-        dm.stop_module(module_id)
-    except Exception:
-        pass  # 即使停止失败也继续卸载
+        await dm.async_stop_module(module_id)
+    except Exception as e:
+        stop_error = str(e)  # 记录停止错误，但继续卸载
 
     # 从已安装列表移除
     cm.remove_installed_module(module_id)
@@ -146,7 +155,10 @@ async def uninstall_module(module_id: str):
     # 更新 Nginx 配置
     _update_nginx_config(cm, ml)
 
-    return {"success": True, "module": module_id}
+    result = {"success": True, "module": module_id}
+    if stop_error:
+        result["warning"] = f"模块已卸载，但停止容器时出错: {stop_error}"
+    return result
 
 
 @router.get("/{module_id}/validate")

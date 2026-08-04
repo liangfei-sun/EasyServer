@@ -169,22 +169,36 @@ const confirmInstall = async () => {
   installing.value = true
   installingId.value = installingModule.value.id
   try {
-    await api.post('/modules/install', { module_id: installingModule.value.id, config: installConfig.value })
-    ElMessage.success(`${installingModule.value.name} 安装成功`)
-    configVisible.value = false
-    loadModules()
-  } catch (e) { ElMessage.error(`安装失败: ${e.response?.data?.detail || e.message}`) }
-  installing.value = false
-  installingId.value = ''
+    const { data } = await api.post('/modules/install', { module_id: installingModule.value.id, config: installConfig.value })
+    if (data.success === false) {
+      ElMessage.error(`安装失败: ${data.error || data.message || '未知错误'}`)
+    } else {
+      ElMessage.success(`${installingModule.value.name} 安装成功`)
+      configVisible.value = false
+      loadModules()
+    }
+  } catch (e) {
+    const detail = e.response?.data?.detail || e.response?.data?.detail || e.message
+    ElMessage.error(`安装失败: ${detail}`)
+  } finally {
+    installing.value = false
+    installingId.value = ''
+  }
 }
 
 const uninstallModule = async (mod) => {
   await ElMessageBox.confirm(`确定卸载 ${mod.name}？数据将保留。`, '确认卸载')
   try {
-    await api.post(`/modules/${mod.id}/uninstall`)
-    ElMessage.success(`${mod.name} 已卸载`)
-    loadModules()
-  } catch (e) { ElMessage.error('卸载失败') }
+    const { data } = await api.post(`/modules/${mod.id}/uninstall`)
+    if (data.success === false) {
+      ElMessage.error(`卸载失败: ${data.error || '未知错误'}`)
+    } else {
+      ElMessage.success(`${mod.name} 已卸载`)
+      loadModules()
+    }
+  } catch (e) {
+    ElMessage.error(`卸载失败: ${e.response?.data?.detail || e.message}`)
+  }
 }
 
 onMounted(loadModules)

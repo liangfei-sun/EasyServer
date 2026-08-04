@@ -34,14 +34,19 @@ docs:
   usage: |
     ## Cloudflare Tunnel 内网穿透
 
-    通过 Cloudflare 隧道将本地服务安全发布到公网，无需公网 IP，自带 SSL 加密。
+    通过 Cloudflare 隧道将本地服务安全发布到公网，无需公网 IP，自带 SSL 加密，访问时无需输入端口号。
 
     ### 适用场景
     - 服务器没有公网 IP
+    - 443 端口被运营商/云厂商封锁（如国内云服务器未备案）
     - 不想暴露服务器真实 IP
     - 需要免费的 SSL 证书和 DDoS 防护
 
-    ### 配置步骤
+    ### 一键接入（推荐）
+    在管理面板「内网穿透」页面，粘贴 Cloudflare API Token 后点击一键接入，系统自动创建隧道并启动本模块；
+    之后在服务列表点击「发布」，自动配置路由和 DNS 记录，即可通过 `https://子域名.域名` 访问。
+
+    ### 手动配置步骤（可选）
     1. 登录 [Cloudflare Zero Trust](https://one.dash.cloudflare.com/)
     2. 进入 Networks → Tunnels，创建新隧道
     3. 复制生成的 Tunnel Token
@@ -51,7 +56,7 @@ docs:
     ### 域名映射示例
     | 公网域名 | 服务地址 |
     |---------|----------|
-    | dashboard.example.com | http://localhost:9800 |
+    | notes.example.com | http://localhost:8000 |
     | status.example.com | http://localhost:3001 |
     | media.example.com | http://localhost:8096 |
 
@@ -65,8 +70,10 @@ docs:
       a: "检查 Tunnel Token 是否正确，确认域名已托管在 Cloudflare"
     - q: "访问显示 502 错误？"
       a: "检查映射的服务地址和端口是否正确，确认后端服务已启动"
+    - q: "如何免端口访问？"
+      a: "在管理面板「内网穿透」页面一键接入并发布服务，即可通过 https://子域名.域名 访问（无需端口号）"
     - q: "可以同时使用域名反代和 Tunnel 吗？"
-      a: "可以，但不建议同时使用，可能导致访问冲突"
+      a: "可以，将访问模式设为「混合模式」即可同时启用两种方式"
 
   links:
     - label: "Cloudflare Tunnel 文档"

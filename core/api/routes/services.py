@@ -166,17 +166,24 @@ async def _async_fetch_all_containers() -> list:
 
 
 async def _async_get_all_status() -> list:
-    """异步获取所有服务状态，单次 docker ps 替代串行 compose ps"""
+    """异步获取所有已安装服务的状态，基于 config.yaml 中的 installed_modules 列表"""
     from ..core.docker_manager import DockerManager
     from ..core.module_loader import ModuleLoader
+    from ..core.config_manager import ConfigManager
     dm = _get_docker_manager()
     loader = _get_module_loader()
-    installed = loader.get_installed_modules()
+    cm = _get_config_manager()
+
+    # 从 config.yaml 获取用户实际安装的模块 ID
+    installed_ids = cm.get_installed_modules()
     env = dm._load_env_dict()
 
     all_containers = await _async_fetch_all_containers()
     statuses = []
-    for module in installed:
+    for module_id in installed_ids:
+        module = loader.get_module_by_id(module_id)
+        if not module or not module.get("has_compose"):
+            continue  # 跳过已注册但文件不存在的模块
         try:
             prefix = f"easyserver-{module['id']}"
             containers = []

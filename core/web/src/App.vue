@@ -27,6 +27,10 @@
           <el-icon><Setting /></el-icon>
           <span>服务管理</span>
         </el-menu-item>
+        <el-menu-item index="/tunnel">
+          <el-icon><Promotion /></el-icon>
+          <span>内网穿透</span>
+        </el-menu-item>
         <el-menu-item index="/market">
           <el-icon><ShoppingCart /></el-icon>
           <span>模块市场</span>

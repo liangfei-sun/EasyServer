@@ -16,7 +16,15 @@
             <el-radio label="ipv6_direct">IPv6 直连</el-radio>
             <el-radio label="hybrid">混合模式</el-radio>
           </el-radio-group>
+          <div class="form-help" style="width:100%">
+            域名反代：通过 Nginx + SSL 证书访问（https://子域名.域名:端口）；Cloudflare Tunnel：免端口、免公网 IP；
+            混合模式：两者同时启用，可按需选择每个服务的访问方式。
+          </div>
         </el-form-item>
+        <!-- 混合模式说明 -->
+        <el-alert v-if="form.access_mode === 'hybrid'" type="info" :closable="false" style="margin-bottom: 16px">
+          混合模式：同时启用 <b>Nginx 反向代理</b>（https://子域名.域名:8443）和 <b>Cloudflare Tunnel</b>（https://子域名.域名，免端口），两者可同时访问。
+        </el-alert>
         <el-form-item label="HTTPS 端口">
           <el-input-number v-model="form.https_port" :min="1" :max="65535" />
         </el-form-item>
@@ -27,32 +35,44 @@
             <el-input v-model="form.ssl_email" placeholder="admin@example.com" />
           </el-form-item>
           <el-form-item label="DNS 提供商">
-            <el-radio-group v-model="form.dns_provider" @change="onDnsProviderChange">
-              <el-radio label="aliyun">阿里云</el-radio>
-              <el-radio label="cloudflare">Cloudflare</el-radio>
-            </el-radio-group>
+            <el-select v-model="form.dns_provider" style="width: 100%" @change="onDnsProviderChange">
+              <el-option v-for="p in dnsProviders" :key="p.id" :label="p.name" :value="p.id">
+                <span>{{ p.name }}</span>
+                <span style="color: #909399; font-size: 12px; margin-left: 8px">{{ p.acme_plugin || '自定义插件' }}</span>
+              </el-option>
+            </el-select>
+            <div class="form-help">{{ currentProvider?.description }}</div>
           </el-form-item>
-          <!-- 阿里云凭证 -->
-          <template v-if="form.dns_provider === 'aliyun'">
-            <el-form-item label="AccessKey ID">
-              <el-input v-model="dnsCredentials.aliyun.key" placeholder="LTAI5t..." type="password" show-password />
-              <div class="form-help">
-                <a href="https://ram.console.aliyun.com/manage/ak" target="_blank">前往创建</a>
-                ，需授予 AliyunDNSFullAccess 权限
+          <!-- 按提供商动态渲染凭证字段 -->
+          <template v-if="currentProvider">
+            <el-form-item v-for="f in currentProvider.fields" :key="f.key" :label="f.label">
+              <el-input
+                v-if="f.type !== 'textarea'"
+                v-model="dnsCredentials[form.dns_provider][f.key]"
+                type="password"
+                show-password
+                :placeholder="dnsConfigured[form.dns_provider]?.[f.key] ? '已配置，留空保持不变' : (f.placeholder || '请输入')"
+              />
+              <el-input
+                v-else
+                v-model="dnsCredentials[form.dns_provider][f.key]"
+                type="textarea"
+                :rows="4"
+                :placeholder="f.placeholder"
+              />
+              <div class="form-help" v-if="f.help">
+                {{ f.help }}
+                <a v-if="currentProvider.help_url" :href="currentProvider.help_url" target="_blank" style="margin-left: 4px">前往创建</a>
               </div>
+              <el-tag v-if="dnsConfigured[form.dns_provider]?.[f.key]" type="success" size="small" style="margin-top: 4px">
+                已配置 {{ dnsCredentials[form.dns_provider][f.key] }}（留空则不修改）
+              </el-tag>
             </el-form-item>
-            <el-form-item label="AccessKey Secret">
-              <el-input v-model="dnsCredentials.aliyun.secret" placeholder="AccessKey Secret" type="password" show-password />
-            </el-form-item>
-          </template>
-          <!-- Cloudflare 凭证 -->
-          <template v-if="form.dns_provider === 'cloudflare'">
-            <el-form-item label="API Token">
-              <el-input v-model="dnsCredentials.cloudflare.token" placeholder="Cloudflare API Token" type="password" show-password />
-              <div class="form-help">
-                <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank">前往创建</a>
-                ，权限选择 Zone &gt; DNS &gt; Edit
-              </div>
+            <el-form-item v-if="form.dns_provider === 'custom'">
+              <el-alert type="warning" :closable="false">
+                自定义选项需要填写 acme.sh DNS 插件名和凭证变量，插件完整列表见
+                <a href="https://github.com/acmesh-official/acme.sh/wiki/dnsapi" target="_blank" style="color:#409eff">acme.sh DNS API 文档</a>
+              </el-alert>
             </el-form-item>
           </template>
           <el-form-item label="管理面板子域名">
@@ -62,16 +82,14 @@
           </el-form-item>
         </template>
 
-        <!-- Cloudflare Tunnel 模式：显示 Tunnel Token -->
+        <!-- Cloudflare Tunnel 模式：引导至内网穿透页面（单一接入入口） -->
         <template v-if="form.access_mode === 'cloudflare_tunnel'">
-          <el-form-item label="Tunnel Token">
-            <el-input v-model="form.cf_tunnel_token" placeholder="Cloudflare Tunnel Token" type="password" show-password />
-            <div class="form-help">
-              在 Cloudflare Zero Trust 面板创建 Tunnel 后获取 Token
+          <el-alert type="warning" :closable="false">
+            <template #title>请通过「内网穿透」页面完成接入</template>
+            Cloudflare Tunnel 的接入（创建隧道、启动容器、配置路由、DNS 记录）请统一在「内网穿透」页面操作，无需在此填写 Token。
+            <div style="margin-top: 8px">
+              <el-button type="primary" size="small" @click="$router.push('/tunnel')">前往内网穿透</el-button>
             </div>
-          </el-form-item>
-          <el-alert type="info" :closable="false">
-            Cloudflare Tunnel 自带 SSL、反向代理和 DNS，无需配置 Nginx 和 ACME。
           </el-alert>
         </template>
 
@@ -130,7 +148,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
@@ -144,11 +162,15 @@ const form = ref({
   domain: '', access_mode: 'domain', https_port: 8443, ssl_email: '',
   dns_provider: 'aliyun', panel_subdomain: 'panel', cf_tunnel_token: ''
 })
-const dnsCredentials = ref({
-  aliyun: { key: '', secret: '' },
-  cloudflare: { token: '' }
-})
+const dnsCredentials = ref({ aliyun: {}, cloudflare: {} })
+const dnsProviders = ref([])
+const dnsConfigured = ref({})
 const saving = ref(false)
+
+// 当前选中的 DNS 提供商定义
+const currentProvider = computed(() =>
+  dnsProviders.value.find(p => p.id === form.value.dns_provider) || null
+)
 
 const loadConfig = async () => {
   try {
@@ -162,15 +184,18 @@ const loadConfig = async () => {
     form.value.dns_provider = cfg.dns_provider || 'aliyun'
     form.value.panel_subdomain = cfg.panel_subdomain || 'panel'
     form.value.cf_tunnel_token = cfg.cf_tunnel_token || ''
-    // 加载 DNS 凭证（脱敏后的值）
-    if (data.dns_credentials) {
-      if (data.dns_credentials.aliyun) {
-        dnsCredentials.value.aliyun = data.dns_credentials.aliyun
-      }
-      if (data.dns_credentials.cloudflare) {
-        dnsCredentials.value.cloudflare = data.dns_credentials.cloudflare
-      }
-    }
+    // 加载 DNS 提供商列表与凭证状态
+    dnsProviders.value = data.dns_providers || []
+    const masked = data.dns_credentials || {}
+    const configured = data.dns_credentials_configured || {}
+    dnsProviders.value.forEach(p => {
+      if (!dnsCredentials.value[p.id]) dnsCredentials.value[p.id] = {}
+      if (!dnsConfigured.value[p.id]) dnsConfigured.value[p.id] = {}
+      p.fields.forEach(f => {
+        dnsCredentials.value[p.id][f.key] = masked[p.id]?.[f.key] || ''
+        dnsConfigured.value[p.id][f.key] = !!configured[p.id]?.[f.key]
+      })
+    })
     // 加载资源配置
     resourceForm.value.cpu_limit = cfg.cpu_limit || 2.0
     resourceForm.value.memory_limit = cfg.memory_limit || 2048
@@ -185,11 +210,17 @@ const onAccessModeChange = () => {
 }
 
 const onDnsProviderChange = () => {
-  if (form.value.dns_provider === 'aliyun') {
-    dnsCredentials.value.cloudflare.token = ''
-  } else if (form.value.dns_provider === 'cloudflare') {
-    dnsCredentials.value.aliyun.key = ''
-    dnsCredentials.value.aliyun.secret = ''
+  // 切换提供商时初始化凭证对象，避免 v-model 报错
+  if (!dnsCredentials.value[form.value.dns_provider]) {
+    dnsCredentials.value[form.value.dns_provider] = {}
+    dnsConfigured.value[form.value.dns_provider] = {}
+    const p = currentProvider.value
+    if (p) {
+      p.fields.forEach(f => {
+        dnsCredentials.value[form.value.dns_provider][f.key] = ''
+        dnsConfigured.value[form.value.dns_provider][f.key] = false
+      })
+    }
   }
 }
 
@@ -197,19 +228,27 @@ const saveConfig = async () => {
   saving.value = true
   try {
     const saveData = { ...form.value }
-    // 域名反代模式附带 DNS 凭证
+    // 域名反代/混合模式附带 DNS 凭证（只提交用户新填写的值）
     if (form.value.access_mode === 'domain' || form.value.access_mode === 'hybrid') {
-      saveData.dns_credentials = {
-        [form.value.dns_provider]: dnsCredentials.value[form.value.dns_provider]
+      const provider = form.value.dns_provider
+      const creds = {}
+      const p = currentProvider.value
+      if (p) {
+        p.fields.forEach(f => {
+          const v = dnsCredentials.value[provider]?.[f.key]
+          if (v && !v.startsWith('***')) creds[f.key] = v
+        })
       }
+      saveData.dns_credentials = { [provider]: creds }
     }
     await api.put('/config', saveData)
-    // 域名模式自动重新生成 Nginx 配置
+    // 域名/混合模式自动重新生成 Nginx 配置
     if (form.value.access_mode === 'domain' || form.value.access_mode === 'hybrid') {
       try { await api.post('/nginx/generate') } catch {}
     }
     ElMessage.success('配置已保存并应用')
-  } catch (e) { ElMessage.error('保存失败') }
+    loadConfig()  // 刷新已配置状态
+  } catch (e) { ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message)) }
   saving.value = false
 }
 

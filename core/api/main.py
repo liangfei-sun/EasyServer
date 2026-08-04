@@ -10,7 +10,7 @@ from starlette.routing import Route
 import os
 import shutil
 
-from .routes import services, config, modules, nginx, docs, backup
+from .routes import services, config, modules, nginx, docs, backup, cloudflare
 from .core.auth import AuthMiddleware
 
 app = FastAPI(
@@ -55,6 +55,7 @@ app.include_router(modules.router)
 app.include_router(nginx.router)
 app.include_router(docs.router)
 app.include_router(backup.router)
+app.include_router(cloudflare.router)
 
 
 @app.get("/api/health")

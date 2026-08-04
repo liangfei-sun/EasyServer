@@ -1,0 +1,94 @@
+id: frigate
+name: "Frigate NVR 监控"
+version: "1.0"
+description: "开源 AI 视频监控系统，支持人形/车辆检测，可接入旧手机摄像头"
+category: infra
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: FRIGATE_PORT
+    label: "Web UI 端口"
+    type: number
+    default: 5000
+    required: true
+  - key: FRIGATE_RTSP_PORT
+    label: "RTSP 流端口"
+    type: number
+    default: 8554
+    required: true
+
+access:
+  subdomain: frigate
+  port: 5000
+  protocol: http
+  proxy_extra:
+    proxy_buffering: "off"
+    client_max_body_size: "0"
+
+healthcheck:
+  url: "http://127.0.0.1:{FRIGATE_PORT}/api/version"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "2g"
+  cpu_limit: "2.0"
+
+docs:
+  usage: |
+    ## Frigate NVR 监控
+
+    开源 AI 视频监控系统，支持人形/车辆/动物检测，可接入 IP 摄像头或旧手机摄像头。
+
+    ### 首次使用
+    1. 通过 `https://frigate.你的域名:8443` 访问 Web UI
+    2. 在旧手机上安装 IP Webcam 应用，获取 RTSP 流地址
+    3. 编辑配置文件 `data/frigate/config/config.yml`，添加摄像头
+    4. 重启 Frigate 容器使配置生效
+
+    ### 摄像头配置示例
+    编辑 `data/frigate/config/config.yml`：
+
+    ```yaml
+    cameras:
+      old_phone:
+        ffmpeg:
+          inputs:
+            - path: rtsp://192.168.1.100:8554/video
+              roles:
+                - detect
+                - record
+        detect:
+          width: 1280
+          height: 720
+        objects:
+          track:
+            - person
+            - car
+    ```
+
+    ### 常用功能
+    - **实时查看**：Web UI 直接查看摄像头画面
+    - **AI 检测**：自动识别人形、车辆等目标，减少误报
+    - **录像回放**：支持时间线回放和事件截图
+    - **MQTT 集成**：可对接 Home Assistant 实现智能联动
+
+  faq:
+    - q: "手机摄像头画面卡顿或断连？"
+      a: "确保手机和服务器在同一局域网，检查 RTSP 流地址是否正确，尝试降低分辨率"
+    - q: "CPU 占用过高？"
+      a: "降低检测分辨率至 720p，减少跟踪的物体类型，或考虑购买 Coral TPU"
+    - q: "如何通过外网查看监控？"
+      a: "Frigate 已配置 Nginx 反代，通过域名访问即可。建议设置强密码"
+
+  links:
+    - label: "Frigate 官方文档"
+      url: "https://docs.frigate.video/"
+    - label: "Frigate GitHub"
+      url: "https://github.com/blakeblackshear/frigate"

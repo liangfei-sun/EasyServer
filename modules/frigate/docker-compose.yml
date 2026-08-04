@@ -1,0 +1,23 @@
+# EasyServer - Frigate NVR 监控模块
+
+services:
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: easyserver-frigate
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRIGATE_PORT:-5000}:5000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRIGATE_RTSP_PORT:-8554}:8554"
+    volumes:
+      - ${DATA_DIR}/frigate/config:/config
+      - ${DATA_DIR}/frigate/storage:/media/frigate
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -133,8 +133,12 @@ const toggleService = async (svc) => {
     } catch { return }
   }
   try {
-    await api.post(`/services/${svc.id}/${action}`)
-    ElMessage.success(`${svc.name} 已${action === 'start' ? '启动' : '停止'}`)
+    const { data } = await api.post(`/services/${svc.id}/${action}`)
+    if (data.success === false) {
+      ElMessage.error(`${svc.name} ${action === 'start' ? '启动' : '停止'}失败: ${data.error || '未知错误'}`)
+    } else {
+      ElMessage.success(`${svc.name} 已${action === 'start' ? '启动' : '停止'}`)
+    }
     loadServices()
   } catch (e) {
     ElMessage.error(`操作失败: ${e.response?.data?.detail || e.message}`)
@@ -148,10 +152,16 @@ const restartAll = async () => {
   restartingAll.value = true
   try {
     const runningSvcs = services.value.filter(s => s.status === 'running')
+    let failed = []
     for (const svc of runningSvcs) {
-      await api.post(`/services/${svc.id}/restart`)
+      const { data } = await api.post(`/services/${svc.id}/restart`)
+      if (data.success === false) failed.push(svc.name)
     }
-    ElMessage.success('所有服务已重启')
+    if (failed.length) {
+      ElMessage.warning(`大部分服务已重启，但以下失败: ${failed.join(', ')}`)
+    } else {
+      ElMessage.success('所有服务已重启')
+    }
     loadServices()
   } catch (e) {
     ElMessage.error(`重启失败: ${e.response?.data?.detail || e.message}`)

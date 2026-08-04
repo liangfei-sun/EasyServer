@@ -198,7 +198,11 @@ const doAction = async (id, action) => {
   try {
     const { data } = await api.post(`/services/${id}/${action}`)
     const actionLabel = { start: '启动', stop: '停止', restart: '重启', update: '更新' }
-    ElMessage.success(`${id} ${actionLabel[action] || action} 成功`)
+    if (data.success === false) {
+      ElMessage.error(`${id} ${actionLabel[action] || action} 失败: ${data.error || '未知错误'}`)
+    } else {
+      ElMessage.success(`${id} ${actionLabel[action] || action} 成功`)
+    }
     loadServices()
   } catch (e) { ElMessage.error(`操作失败: ${e.response?.data?.detail || e.message}`) }
 }

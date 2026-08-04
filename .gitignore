@@ -27,6 +27,7 @@ core/web/node_modules/
 # IDE
 .vscode/
 .idea/
+.qoder/
 *.swp
 *.swo
 
@@ -39,6 +40,9 @@ Thumbs.db
 
 # SSL 证书（敏感文件）
 modules/nginx/ssl/
+
+# ACME DNS 凭证（敏感文件，由后端自动生成）
+modules/acme/dns-credentials.env
 
 # Nginx 运行时生成的配置
 modules/nginx/conf.d/

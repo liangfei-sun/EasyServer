@@ -107,7 +107,8 @@ class DockerManager:
         return result.stdout + result.stderr
 
     async def async_start_module(self, module_id: str) -> dict:
-        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d")
+        # 启动可能涉及镜像拉取，超时设为 10 分钟
+        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600)
         return {"module": module_id, "action": "start", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
 
     async def async_stop_module(self, module_id: str) -> dict:
@@ -120,8 +121,9 @@ class DockerManager:
         return {"module": module_id, "action": "restart", "success": start["success"], "output": start.get("output", ""), "error": start.get("error")}
 
     async def async_update_module(self, module_id: str) -> dict:
-        await self._async_run_compose(module_id, "pull", check=False)
-        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", "--force-recreate")
+        # 更新涉及拉取镜像，超时设为 10 分钟
+        await self._async_run_compose(module_id, "pull", check=False, timeout=600)
+        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", "--force-recreate", timeout=600)
         return {"module": module_id, "action": "update", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
 
     async def async_get_module_status(self, module_id: str) -> dict:

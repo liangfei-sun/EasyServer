@@ -8,11 +8,13 @@ import Login from '../views/Login.vue'
 import NetworkGuide from '../views/NetworkGuide.vue'
 import Backup from '../views/Backup.vue'
 import Docs from '../views/Docs.vue'
+import TunnelManager from '../views/TunnelManager.vue'
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: Dashboard },
   { path: '/services', component: Services },
+  { path: '/tunnel', component: TunnelManager },
   { path: '/market', component: Market },
   { path: '/backup', component: Backup },
   { path: '/settings', component: Settings },

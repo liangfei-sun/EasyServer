@@ -153,14 +153,47 @@ ip -6 addr show scope global
 
 ## Cloudflare Tunnel 配置
 
-如果你的服务器没有公网 IP，可以使用 Cloudflare Tunnel 将服务暴露到公网。
+如果你的服务器没有公网 IP，或者 443 端口被封锁（如国内云服务器未备案），可以使用 Cloudflare Tunnel 将服务暴露到公网，访问时无需输入端口号。
+
+### 工作原理
+
+服务器主动向 Cloudflare 建立出站隧道连接，用户访问 Cloudflare 的标准 443 端口，Cloudflare 再通过隧道转发到本地服务。**无需服务器开放任何入站端口**，也不受运营商/云厂商端口封锁限制。
 
 ### 前提条件
 
-- 域名已托管在 Cloudflare
-- Cloudflare 账户已开通 Tunnel 功能
+- 域名已托管在 Cloudflare（已添加站点并修改 NS 记录）
+- 准备一个 Cloudflare API Token，需包含以下权限：
+  - `Account · Cloudflare Tunnel · Edit`
+  - `Zone · DNS · Edit`
 
-### 配置步骤
+### 一键接入（推荐）
+
+管理界面提供「内网穿透」页面，只需 3 步即可完成：
+
+1. 在 [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens) 创建 API Token（1 分钟）
+2. 在 EasyServer「内网穿透」页面粘贴 Token，点击「验证」
+3. 点击「一键接入」，系统自动完成：
+   - 自动创建隧道（同名隧道自动复用）
+   - 保存隧道 Token 并启动 cloudflare-tunnel 容器
+   - 检查域名托管状态
+
+### 发布服务
+
+接入完成后，在「内网穿透」页面的服务列表中点击「发布」，系统自动完成：
+
+1. 添加 ingress 路由（hostname → http://localhost:端口）
+2. 自动创建 DNS CNAME 记录（子域名 → 隧道ID.cfargotunnel.com）
+3. 发布后即可通过 `https://子域名.你的域名` 免端口访问
+
+### 映射示例
+
+| 公网域名 | 服务地址 | 说明 |
+|---------|---------|------|
+| notes.你的域名 | http://localhost:8000 | NoteDiscovery |
+| status.你的域名 | http://localhost:3001 | Uptime Kuma |
+| media.你的域名 | http://localhost:8096 | Jellyfin |
+
+### 手动配置（不使用管理界面）
 
 1. 登录 [Cloudflare Zero Trust](https://one.dash.cloudflare.com/)
 2. 进入 Access → Tunnels，创建新隧道
@@ -169,12 +202,17 @@ ip -6 addr show scope global
 5. 粘贴 Tunnel Token 到配置中
 6. 在 Cloudflare Dashboard 中配置公网域名映射
 
-### 映射示例
-
-| 公网域名 | 服务地址 |
-|---------|---------|
-| dashboard.你的域名 | http://localhost:9800 |
-| status.你的域名 | http://localhost:3001 |
-| media.你的域名 | http://localhost:8096 |
-
 > **提示**：Cloudflare Tunnel 自带 SSL 加密，无需额外配置 ACME 证书。
+
+---
+
+## 混合模式
+
+混合模式（hybrid）同时启用 **Nginx 反向代理** 和 **Cloudflare Tunnel**，可按需选择每个服务的访问方式：
+
+| 服务 | 访问方式 |
+|------|---------|
+| 部分子域名 | `https://子域名.域名:8443`（走阿里云 Nginx） |
+| 部分子域名 | `https://子域名.域名`（走 Cloudflare Tunnel，免端口） |
+
+适用场景：域名托管在阿里云且 443 端口被封时，主服务继续走 8443，个别服务（如笔记）通过 Tunnel 实现免端口访问。配置方法：在「全局设置」中将访问模式切换为「混合模式」，然后在「内网穿透」页面发布需要走隧道服务的即可。
