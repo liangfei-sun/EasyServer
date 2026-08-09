@@ -1,7 +1,7 @@
 <template>
   <div class="market-page">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px">
-      <h2 style="margin: 0">模块市场</h2>
+      <h2 style="margin: 0">应用商店</h2>
       <el-input
         v-model="searchQuery"
         placeholder="搜索模块..."
@@ -56,17 +56,64 @@
       </el-tab-pane>
     </el-tabs>
 
+    <!-- 安装中状态卡片 -->
+    <el-card v-if="installTask" class="install-progress" shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>安装「{{ moduleName(installTask.module_id) }}」</span>
+          <el-tag :type="installTask.status === 'failed' ? 'danger' : 'primary'" size="small">
+            {{ installTask.status === 'failed' ? '失败' : '进行中' }}
+          </el-tag>
+        </div>
+      </template>
+      <div v-if="installTask.status === 'pending' || installTask.status === 'running'" class="install-stage">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>{{ stageText }}</span>
+      </div>
+      <el-alert
+        v-else-if="installTask.status === 'failed'"
+        type="error"
+        :title="installTask.error?.hint || '安装失败'"
+        show-icon
+        :closable="false"
+      >
+        <template #default>
+          <div v-if="installTask.error?.detail" style="margin-top: 8px">
+            <el-button link type="primary" size="small" @click="showErrorDetail = !showErrorDetail">
+              {{ showErrorDetail ? '收起原始错误' : '查看原始错误' }}
+            </el-button>
+            <pre v-if="showErrorDetail" class="error-detail">{{ installTask.error.detail }}</pre>
+          </div>
+          <el-button type="primary" size="small" style="margin-top: 8px" @click="retryInstall">重新安装</el-button>
+        </template>
+      </el-alert>
+    </el-card>
+
     <!-- 安装配置弹窗 -->
     <el-dialog v-model="configVisible" :title="'安装 ' + installingModule?.name" :width="isMobile ? '95%' : '500px'">
       <el-form :model="installConfig" label-width="120px">
-        <el-form-item v-for="field in configFields" :key="field.key" :label="field.label || field.key">
-          <el-input v-if="field.type === 'text' || field.type === 'password'" v-model="installConfig[field.key]" :type="field.type" :placeholder="field.description" />
-          <el-input-number v-else-if="field.type === 'number'" v-model="installConfig[field.key]" />
-          <el-switch v-else-if="field.type === 'bool'" v-model="installConfig[field.key]" />
-          <el-select v-else-if="field.type === 'select'" v-model="installConfig[field.key]">
+        <el-form-item
+          v-for="field in configFields"
+          :key="field.key"
+          :label="field.label || field.key"
+          :required="field.required && !field.auto_generate"
+        >
+          <!-- 密码字段：显示/隐藏切换 + 随机生成 -->
+          <div v-if="field.type === 'password'" style="width: 100%">
+            <el-input v-model="installConfig[field.key]" type="password" show-password :placeholder="field.placeholder || '输入密码'" :disabled="installing">
+              <template #append>
+                <el-button @click="generateFieldPassword(field)" :disabled="installing">生成</el-button>
+              </template>
+            </el-input>
+            <div class="field-hint">{{ field.auto_generate ? '留空将自动生成随机密码' : (field.description || '') }}</div>
+          </div>
+          <el-input v-else-if="field.type === 'text' || field.type === 'string'" v-model="installConfig[field.key]" :placeholder="field.description" :disabled="installing" />
+          <el-input-number v-else-if="field.type === 'number'" v-model="installConfig[field.key]" :disabled="installing" />
+          <el-switch v-else-if="field.type === 'bool' || field.type === 'boolean'" v-model="installConfig[field.key]" :disabled="installing" />
+          <el-select v-else-if="field.type === 'select'" v-model="installConfig[field.key]" :disabled="installing">
             <el-option v-for="opt in field.options" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
-          <el-input v-else v-model="installConfig[field.key]" :placeholder="field.description" />
+          <el-input v-else v-model="installConfig[field.key]" :placeholder="field.description" :disabled="installing" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -80,7 +127,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { Search, Loading } from '@element-plus/icons-vue'
 import api from '../api'
 
 const isMobile = ref(false)
@@ -98,6 +145,11 @@ const installing = ref(false)
 const installingId = ref('')
 const searchQuery = ref('')
 const activeFilter = ref('all')
+
+// 安装任务状态（轮询）
+const installTask = ref(null)
+const showErrorDetail = ref(false)
+let installPollTimer = null
 
 const categories = ref([])
 
@@ -162,23 +214,46 @@ const installModule = (mod) => {
   configFields.value = mod.config || []
   installConfig.value = {}
   ;(mod.config || []).forEach(f => { installConfig.value[f.key] = f.default ?? '' })
-  configVisible.value = true
+  if (configFields.value.length === 0) {
+    // 无配置字段，直接开始安装
+    startInstall(mod, {})
+  } else {
+    configVisible.value = true
+  }
 }
 
-const confirmInstall = async () => {
+const moduleName = (id) => {
+  const m = modules.value.find(x => x.id === id)
+  return m ? m.name : id
+}
+
+const stageText = computed(() => {
+  const t = installTask.value
+  if (!t) return ''
+  if (t.status === 'pending') return '准备中...'
+  if (t.status === 'running') {
+    if (t.stage === 'pull') return '正在拉取镜像，大镜像可能需要几分钟，请耐心等待...'
+    if (t.stage === 'up') return '正在启动容器...'
+    return '安装中...'
+  }
+  return ''
+})
+
+const startInstall = async (mod, config) => {
   installing.value = true
-  installingId.value = installingModule.value.id
+  installingId.value = mod.id
   try {
-    const { data } = await api.post('/modules/install', { module_id: installingModule.value.id, config: installConfig.value })
+    const { data } = await api.post('/modules/install', { module_id: mod.id, config })
     if (data.success === false) {
-      ElMessage.error(`安装失败: ${data.error || data.message || '未知错误'}`)
-    } else {
-      ElMessage.success(`${installingModule.value.name} 安装成功`)
-      configVisible.value = false
-      loadModules()
+      ElMessage.error(`安装失败: ${data.message || '未知错误'}`)
+      return
     }
+    configVisible.value = false
+    showErrorDetail.value = false
+    installTask.value = { module_id: mod.id, status: data.status || 'pending', stage: '', error: null, log: [] }
+    startPolling(mod.id)
   } catch (e) {
-    const detail = e.response?.data?.detail || e.response?.data?.detail || e.message
+    const detail = e.response?.data?.detail || e.message
     ElMessage.error(`安装失败: ${detail}`)
   } finally {
     installing.value = false
@@ -186,14 +261,102 @@ const confirmInstall = async () => {
   }
 }
 
-const uninstallModule = async (mod) => {
-  await ElMessageBox.confirm(`确定卸载 ${mod.name}？数据将保留。`, '确认卸载')
+const startPolling = (moduleId) => {
+  stopPolling()
+  let noneCount = 0
+  installPollTimer = setInterval(async () => {
+    try {
+      const { data } = await api.get(`/modules/${moduleId}/install/status`)
+      if (data.status === 'none') {
+        // 任务丢失（如后端重启），连续多次后停止轮询
+        if (++noneCount >= 5) {
+          stopPolling()
+          ElMessage.warning('安装状态查询失败（服务可能已重启），请刷新页面确认')
+          installTask.value = null
+        }
+        return
+      }
+      installTask.value = data
+      if (data.status === 'success') {
+        stopPolling()
+        ElMessage.success('安装成功')
+        installTask.value = null
+        loadModules()
+      }
+    } catch (e) {
+      stopPolling()
+      ElMessage.error('查询安装状态失败，请稍后在页面刷新确认结果')
+    }
+  }, 2000)
+}
+
+const stopPolling = () => {
+  if (installPollTimer) {
+    clearInterval(installPollTimer)
+    installPollTimer = null
+  }
+}
+
+const retryInstall = () => {
+  const mod = modules.value.find(x => x.id === installTask.value?.module_id)
+  if (!mod) return
+  installTask.value = null
+  showErrorDetail.value = false
+  installModule(mod)
+}
+
+const generateFieldPassword = async (field) => {
   try {
-    const { data } = await api.post(`/modules/${mod.id}/uninstall`)
+    const { data } = await api.post('/config/generate-password')
+    installConfig.value[field.key] = data.password
+  } catch (e) {
+    ElMessage.error('生成密码失败，请手动输入')
+  }
+}
+
+const confirmInstall = async () => {
+  // 必填校验（auto_generate 字段留空由后端自动生成）
+  for (const f of configFields.value) {
+    if (f.required && !f.auto_generate) {
+      const v = installConfig.value[f.key]
+      if (v === undefined || v === null || String(v).trim() === '') {
+        ElMessage.warning(`字段「${f.label || f.key}」为必填项`)
+        return
+      }
+    }
+  }
+  const mod = installingModule.value
+  if (!mod) return
+  await startInstall(mod, { ...installConfig.value })
+}
+
+const uninstallModule = async (mod) => {
+  let removeData = false
+  try {
+    await ElMessageBox.confirm(
+      `确定卸载 ${mod.name}？\n卸载将停止容器并删除镜像。是否同时删除该模块的数据目录？`,
+      '卸载模块',
+      {
+        distinguishCancelAndClose: true,
+        confirmButtonText: '删除数据',
+        cancelButtonText: '仅卸载（保留数据）',
+        type: 'warning'
+      }
+    )
+    removeData = true
+  } catch (action) {
+    if (action === 'cancel') {
+      removeData = false // 仅卸载，保留数据
+    } else {
+      return // 点击关闭（X/ESC），放弃卸载
+    }
+  }
+  try {
+    const { data } = await api.post(`/modules/${mod.id}/uninstall`, { remove_data: removeData })
     if (data.success === false) {
       ElMessage.error(`卸载失败: ${data.error || '未知错误'}`)
     } else {
-      ElMessage.success(`${mod.name} 已卸载`)
+      ElMessage.success(removeData ? `${mod.name} 已卸载，数据已删除` : `${mod.name} 已卸载，数据已保留`)
       loadModules()
     }
   } catch (e) {
@@ -202,6 +365,9 @@ const uninstallModule = async (mod) => {
 }
 
 onMounted(loadModules)
+onUnmounted(() => {
+  stopPolling()
+})
 </script>
 
 <style scoped>
@@ -211,4 +377,8 @@ onMounted(loadModules)
 .mod-meta { display: flex; gap: 16px; font-size: 12px; color: #999; margin-bottom: 6px; }
 .mod-deps { display: flex; gap: 6px; flex-wrap: wrap; }
 .filter-tags { margin: 16px 0; }
+.install-progress { margin-bottom: 16px; }
+.install-stage { display: flex; align-items: center; gap: 8px; color: #409EFF; font-size: 14px; }
+.error-detail { background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.field-hint { font-size: 12px; color: #999; line-height: 1.4; margin-top: 4px; }
 </style>

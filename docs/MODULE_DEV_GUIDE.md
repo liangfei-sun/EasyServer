@@ -47,6 +47,8 @@ config:                            # Web 界面动态渲染的配置表单
     type: password
     default: ""
     required: true
+    auto_generate: true          # 留空时由系统自动生成随机密码
+    description: "留空将自动生成随机密码"
 
 access:
   subdomain: cloud                 # 子域名前缀（如 cloud.example.com）
@@ -152,6 +154,7 @@ config:
     type: number                   # 字段类型：string/number/boolean/password/select
     default: 8080                  # 默认值
     required: true                 # 是否必填
+    auto_generate: false           # 可选：留空时自动生成随机值（仅 password 类）
     description: "说明文字"         # 帮助文本
 ```
 
@@ -162,8 +165,10 @@ config:
 | `string` | 文本输入 | - |
 | `number` | 数字输入 | - |
 | `boolean` | 开关 | - |
-| `password` | 密码输入（隐藏） | - |
+| `password` | 密码输入（可显示/隐藏切换、一键随机生成） | `auto_generate: true` 时留空自动生成随机密码 |
 | `select` | 下拉选择 | `options: [{value: "x", label: "显示"}]` |
+
+**`auto_generate` 约定**：仅用于 `password` 类字段。用户留空时，安装接口自动调用密码生成器生成随机值并写入 `.env`，适用于数据库密码、会话密钥、API Token 等。与 `required: true` 可同时声明（此时必填校验跳过自动生成字段）。
 
 ### access 访问配置
 
@@ -203,7 +208,7 @@ resources:
 ### 必须遵守的规范
 
 1. **容器名**：统一前缀 `easyserver-`，格式为 `easyserver-{module_id}`，确保服务发现机制能正确识别
-2. **数据路径**：使用 `${DATA_DIR}/<module>/` 变量
+2. **数据路径**：使用 `${DATA_DIR}/<module>/` 变量。模块数据必须放在 `${DATA_DIR}/<id>/` 下——卸载时选择"删除数据"将按 docker-compose.yml 中 volumes 解析的宿主路径删除 `${DATA_DIR}/<id>/` 及 `modules/<id>/` 下的数据目录（`conf.d`、`templates`、`scripts` 等配置目录除外）；禁止将 `${DATA_DIR}` 根路径挂载为业务数据（卸载时会被安全规则跳过，数据将无法随卸载删除）
 3. **宿主机路径**：涉及宿主机路径挂载时，必须使用 `${PROJECT_ROOT:-/home/lf/easyserver}` 前缀的绝对路径，禁止使用 `./` 相对路径（因为管理引擎从容器内执行 docker compose，相对路径会解析错误）
 4. **端口绑定**：使用 `${BIND_ADDRESS:-127.0.0.1}` 变量，支持访问模式切换
 5. **日志限制**：必须添加 `max-size: "10m"`, `max-file: "3"`

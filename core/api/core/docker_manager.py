@@ -3,12 +3,37 @@ EasyServer Docker Manager
 """
 import asyncio
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 
 class DockerManager:
+    # 镜像仓库网络错误诊断规则：(类型, 正则, 友好提示)
+    _DIAGNOSE_RULES = [
+        ("registry_github", r"ghcr\.io", "无法连接 GitHub 容器仓库 ghcr.io，请检查网络连通性，或配置代理/镜像加速器后重试"),
+        ("registry_dockerhub", r"registry-1\.docker\.io|docker\.io", "无法连接 Docker Hub 镜像仓库，请检查网络连通性，或配置镜像加速器后重试"),
+        ("network", r"i/o timeout|context deadline exceeded|timed out|timeout|dial tcp|connection (refused|reset|closed)|TLS handshake", "镜像拉取网络超时或连接失败，请检查网络连通性，或配置代理/镜像加速器后重试"),
+        ("manifest", r"manifest unknown|not found|unauthorized|denied|no matching manifest", "镜像不存在或无拉取权限，请检查镜像地址是否正确"),
+    ]
+
+    @staticmethod
+    def diagnose_pull_error(stderr: str) -> dict:
+        """解析 docker pull/compose pull 失败输出，返回友好诊断提示
+
+        返回 {type, hint}，type 为诊断类型（registry_github / registry_dockerhub /
+        network / manifest / unknown），hint 为中文友好提示；未命中返回 type=unknown。
+        """
+        if not stderr:
+            return {"type": "unknown", "hint": ""}
+        for diag_type, pattern, hint in DockerManager._DIAGNOSE_RULES:
+            if re.search(pattern, stderr, re.IGNORECASE):
+                return {"type": diag_type, "hint": hint}
+        return {"type": "unknown", "hint": ""}
+
     def __init__(self, project_root: str):
         self.project_root = Path(project_root)
         self.modules_dir = self.project_root / "modules"
@@ -111,6 +136,14 @@ class DockerManager:
         rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600)
         return {"module": module_id, "action": "start", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
 
+    async def async_pull_module(self, module_id: str) -> tuple:
+        """拉取模块镜像，返回 (returncode, stdout, stderr)
+
+        与启动分离：pull 失败说明是镜像/网络问题，可精确定位诊断。
+        大镜像拉取耗时长，超时设为 10 分钟。
+        """
+        return await self._async_run_compose(module_id, "pull", check=False, timeout=600)
+
     async def async_stop_module(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "down")
         return {"module": module_id, "action": "stop", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
@@ -125,6 +158,126 @@ class DockerManager:
         await self._async_run_compose(module_id, "pull", check=False, timeout=600)
         rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", "--force-recreate", timeout=600)
         return {"module": module_id, "action": "update", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
+
+    async def async_remove_module(self, module_id: str) -> dict:
+        """卸载模块：停止并删除容器 + 删除镜像（docker compose down --rmi all）"""
+        # 删除镜像可能较慢，超时设为 10 分钟
+        rc, stdout, stderr = await self._async_run_compose(module_id, "down", "--rmi", "all", timeout=600)
+        return {"module": module_id, "action": "remove", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
+
+    def resolve_module_data_paths(self, module_id: str) -> list:
+        """解析模块数据目录：docker-compose volumes 中挂载在数据区的路径
+
+        用于卸载时按用户选择删除数据。路径以代码运行时视角返回（容器内为
+        /app、/app/data，宿主开发环境为项目根目录）：.env 中的 PROJECT_ROOT
+        映射到 self.project_root，DATA_DIR 映射到 self.project_root/data。
+        安全规则：
+        - 仅接受 `${DATA_DIR}/<module_id>/` 下的路径（如 data/jellyfin/config）
+        - 兼容 `data/<module_id>-xxx` 同级目录（如 data/filebrowser-db）
+        - 接受 `${PROJECT_ROOT}/modules/<module_id>/` 下除配置类目录（conf.d/templates/scripts）外的路径（如 nginx 的 ssl/log）
+        - 排除 DATA_DIR / PROJECT_ROOT / 模块目录本身（防止误删全部数据）
+        """
+        compose_file = self.modules_dir / module_id / "docker-compose.yml"
+        if not compose_file.exists():
+            return []
+        env = self._load_env_dict()
+        project_root = self.project_root.resolve()
+        # .env 中的宿主路径（compose 变量值），用于路径映射
+        env_project = Path(env.get("PROJECT_ROOT", str(project_root))).expanduser().resolve()
+        env_data = Path(env.get("DATA_DIR", str(project_root / "data"))).expanduser().resolve()
+        module_dir = (self.modules_dir / module_id).resolve()
+        # 数据根目录（根 compose 将 ${DATA_DIR} 挂载到容器 /data，同时 ./data 挂载到 /app/data）
+        data_root = project_root / "data"
+        data_prefix = data_root / module_id
+        keep_names = {"conf.d", "templates", "scripts"}
+
+        def _runtime_path(p: Path) -> Path:
+            """将 .env 宿主路径映射为代码运行时的可见路径"""
+            try:
+                rel = p.relative_to(env_project)
+                return (project_root / rel).resolve()
+            except ValueError:
+                pass
+            try:
+                rel = p.relative_to(env_data)
+                return (data_root / rel).resolve()
+            except ValueError:
+                return p.resolve()
+
+        def _expand(value: str) -> str:
+            def repl(m):
+                default = m.group(2) or ""
+                return env.get(m.group(1)) or default
+            value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}", repl, value)
+            value = re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", lambda m: env.get(m.group(1), ""), value)
+            return value
+
+        try:
+            with open(compose_file, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f) or {}
+        except Exception:
+            return []
+
+        data_paths = set()
+        module_paths = set()
+
+        def _split_host_source(vol: str) -> str:
+            """提取卷的宿主机路径，跳过 ${...} 块（其默认值可能包含冒号或嵌套 ${...}）"""
+            i = 0
+            depth = 0
+            while i < len(vol):
+                ch = vol[i]
+                if ch == "$" and i + 1 < len(vol) and vol[i + 1] == "{":
+                    depth = 1
+                    i += 2  # 跳过 ${
+                    continue
+                if depth:
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                    i += 1
+                    continue
+                if ch == ":":
+                    return vol[:i]
+                i += 1
+            return vol
+
+        for svc in (compose.get("services") or {}).values():
+            volumes = svc.get("volumes") or []
+            if isinstance(volumes, dict):
+                volumes = list(volumes.values())
+            for vol in volumes:
+                source = ""
+                if isinstance(vol, dict):
+                    source = vol.get("source", "") or vol.get("src", "")
+                elif isinstance(vol, str):
+                    source = _split_host_source(vol)
+                if not source:
+                    continue
+                host_path = _expand(source)
+                if not host_path:
+                    continue
+                try:
+                    p = _runtime_path(Path(host_path).expanduser())
+                except Exception:
+                    continue
+                if p == data_root or p == project_root or p == module_dir:
+                    continue
+                try:
+                    if p.is_relative_to(data_prefix):
+                        data_paths.add(data_prefix)
+                    elif p.parent == data_root and p.name.startswith(f"{module_id}-"):
+                        data_paths.add(p)
+                    elif p.is_relative_to(module_dir) and p.name not in keep_names:
+                        module_paths.add(p)
+                except ValueError:
+                    continue
+
+        # 按深度降序返回（先删除子目录）
+        result = list(data_paths) + list(module_paths)
+        result.sort(key=lambda x: len(x.parts), reverse=True)
+        return result
 
     async def async_get_module_status(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "ps", "-a", "--format", "json", check=False)

@@ -23,11 +23,11 @@
         </el-form>
         <el-alert type="info" :closable="false" style="margin-top: 24px">
           <template #title>
-            <strong>核心服务将自动安装</strong>
+            <strong>初始设置不会安装任何服务</strong>
           </template>
           <div style="margin-top: 8px; font-size: 13px; color: #666">
-            系统将自动安装 Nginx 反向代理、SSL 证书、动态域名解析等核心服务。<br/>
-            网络访问配置可在进入管理面板后完成。
+            系统不会自动安装任何服务模块。进入管理面板完成网络配置时，将按所选访问方式自动安装对应网络模块
+            （域名反代 → Nginx/SSL/DDNS，隧道 → Cloudflare Tunnel），其余服务可在应用商店按需安装。
           </div>
         </el-alert>
       </div>
@@ -48,8 +48,8 @@
         <div v-if="deploying || deployed" class="deploy-section">
           <div v-if="deploying" class="deploy-status">
             <el-icon class="is-loading" :size="48" color="#409EFF"><Loading /></el-icon>
-            <h3>正在部署核心服务...</h3>
-            <p class="deploy-hint">将安装 Nginx、SSL 证书、动态域名解析</p>
+            <h3>正在保存基础配置...</h3>
+            <p class="deploy-hint">不会安装任何服务模块</p>
             <div class="deploy-log">
               <div v-for="(log, i) in deployLogs" :key="i" class="log-line">
                 <span class="log-time">{{ log.time }}</span>
@@ -59,13 +59,8 @@
           </div>
           <div v-else-if="deployed" class="deploy-status">
             <el-icon :size="48" color="#67C23A"><SuccessFilled /></el-icon>
-            <h3>部署完成！</h3>
-            <p class="deploy-hint">核心服务已安装，请在管理面板中配置网络访问</p>
-            <div class="deploy-summary">
-              <el-tag type="success" size="large">Nginx 反向代理</el-tag>
-              <el-tag type="success" size="large">SSL 证书管理</el-tag>
-              <el-tag type="success" size="large">动态域名解析</el-tag>
-            </div>
+            <h3>基础配置完成！</h3>
+            <p class="deploy-hint">请在管理面板中配置网络访问，或在应用商店中安装所需服务</p>
             <el-button type="primary" size="large" @click="goToLogin" style="margin-top: 24px">
               登录管理面板
             </el-button>
@@ -136,18 +131,7 @@ const startDeploy = async () => {
     })
 
     addLog('配置已保存', 'success')
-
-    if (data.install_results) {
-      for (const result of data.install_results) {
-        if (result.success) {
-          addLog(`${result.module} 安装成功`, 'success')
-        } else {
-          addLog(`${result.module} 安装失败: ${result.error}`, 'error')
-        }
-      }
-    }
-
-    addLog('部署完成！', 'success')
+    addLog('基础配置完成，可在应用商店或网络配置中安装服务', 'success')
     deployed.value = true
   } catch (e) {
     addLog(`部署失败: ${e.response?.data?.detail || e.message}`, 'error')
@@ -251,14 +235,6 @@ const goToLogin = () => {
 .log-line .success { color: #67c23a; }
 .log-line .error { color: #f56c6c; }
 .log-line .info { color: #d4d4d4; }
-
-.deploy-summary {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  flex-wrap: wrap;
-  margin-top: 20px;
-}
 
 .wizard-footer {
   margin-top: 32px;

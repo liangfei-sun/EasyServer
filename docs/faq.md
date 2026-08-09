@@ -16,8 +16,34 @@
 | 端口被占用 | 修改服务端口或停止占用端口的程序 |
 | 内存不足 | 增加服务器内存或减少运行的服务数量 |
 | 配置错误 | 检查模块配置参数，重新安装模块 |
-| 镜像拉取失败 | 检查网络连接，或手动 `docker pull` 镜像 |
+| 镜像拉取失败 | 见下方「镜像拉取失败/网络超时」章节，应用商店安装失败时会直接提示原因 |
 | Docker socket 权限 | 确保当前用户在 docker 用户组中 |
+
+### 镜像拉取失败/网络超时
+
+安装应用时若提示「无法连接 GitHub 容器仓库 ghcr.io」或「无法连接 Docker Hub」，说明服务器无法访问镜像仓库，常见原因及解决：
+
+| 提示 | 原因 | 解决 |
+|------|------|------|
+| 无法连接 GitHub 容器仓库 ghcr.io | 国内网络直连 ghcr.io 不稳定（Frigate、NoteDiscovery 等镜像在此） | 配置 Docker 镜像加速器或代理后重试 |
+| 无法连接 Docker Hub | 国内网络直连 Docker Hub 不稳定 | 配置镜像加速器后重试 |
+| 镜像拉取网络超时/连接失败 | 服务器网络波动或防火墙拦截 | 检查网络连通性，稍后重试 |
+| 镜像不存在或无拉取权限 | 镜像地址有误或已下架 | 检查模块配置中的镜像地址 |
+
+**配置镜像加速器**（需在宿主机操作，EasyServer 容器内无法自动修改）：
+
+```bash
+# 编辑 Docker 守护进程配置
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "registry-mirrors": ["https://docker.m.daocloud.io"]
+}
+EOF
+# 重启 Docker 使配置生效
+sudo systemctl restart docker
+```
+
+加速器地址以各服务商最新公告为准（如 DaoCloud、阿里云容器镜像服务等）。配置完成后回到应用商店重新安装即可。
 
 ### 重启服务
 
@@ -45,7 +71,7 @@ sudo netstat -tlnp | grep 端口号
 
 1. **停止占用端口的进程**（如果不重要）
 2. **修改 EasyServer 服务端口**：
-   - 进入「模块市场」卸载该服务
+   - 进入「应用商店」卸载该服务
    - 重新安装，填写新的端口号
 3. **使用域名反代模式**：Nginx 统一入口，避免端口冲突
 
@@ -165,6 +191,9 @@ tar -czf easyserver-backup-$(date +%Y%m%d).tar.gz \
 | Uptime Kuma | data/uptime-kuma/ | 监控数据、配置 |
 | FileBrowser | data/filebrowser/ | 文件管理数据库 |
 | NoteDiscovery | data/notediscovery/ | 笔记文件 |
+| Nginx | modules/nginx/ssl、log | SSL 证书、访问/错误日志 |
+| Frigate | data/frigate/ | 监控录像、检测配置 |
+| Backup | data/backups/ | restic 备份仓库 |
 
 ### 恢复
 
@@ -196,7 +225,7 @@ docker compose up -d
 ### 管理面板打不开？
 
 1. 确认管理引擎容器正在运行：`docker ps | grep easyserver-core`
-2. 检查 HTTPS 端口是否正确（在「全局设置」中查看）
+2. 检查 HTTPS 端口是否正确（在「网络配置」的域名反代配置中查看）
 3. 查看引擎日志：`docker logs easyserver-core`
 
 ### 修改端口后外网无法访问？

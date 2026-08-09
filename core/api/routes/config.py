@@ -8,7 +8,6 @@ from typing import Optional
 from ..core.config_manager import ConfigManager
 from ..core.docker_manager import DockerManager
 from ..core.module_loader import ModuleLoader
-from ..core.nginx_generator import NginxGenerator
 from ..core.dns_providers import DNS_PROVIDERS, get_provider, is_mask_value, MASK_PREFIX
 import os
 import subprocess
@@ -226,7 +225,7 @@ async def update_config(update: ConfigUpdate):
         cm.set_env_value("DOMAIN", update.domain)
 
     if update.access_mode is not None:
-        if update.access_mode not in ("domain", "cloudflare_tunnel", "ipv6_direct", "hybrid"):
+        if update.access_mode not in ("domain", "cloudflare_tunnel", "ipv6_direct", "hybrid", "custom"):
             raise HTTPException(status_code=400, detail="无效的访问模式")
         cm.set_config_value("access_mode", update.access_mode)
         cm.set_env_value("ACCESS_MODE", update.access_mode)
@@ -291,10 +290,8 @@ class SetupRequest(BaseModel):
 
 @router.post("/setup")
 async def run_setup(request: SetupRequest):
-    """执行初始设置（安装向导调用）- 极简模式，只装核心模块"""
+    """执行初始设置（安装向导调用）- 只保存基础配置，不自动安装任何服务模块"""
     cm = _get_config_manager()
-    dm = DockerManager(PROJECT_ROOT)
-    ml = ModuleLoader(PROJECT_ROOT)
 
     # 1. 保存基础配置
     cm.set_config_value("domain", request.domain)
@@ -306,37 +303,12 @@ async def run_setup(request: SetupRequest):
     if request.admin_password:
         cm.set_admin_password(request.admin_password)
 
-    # 3. 安装核心模块（nginx + acme + ddns-go）
-    core_modules = ["nginx", "acme", "ddns-go"]
-    install_results = []
-
-    for module_id in core_modules:
-        metadata = ml.get_module_by_id(module_id)
-        if not metadata:
-            install_results.append({"module": module_id, "success": False, "error": "模块不存在"})
-            continue
-        try:
-            cm.add_installed_module(module_id)
-            dm.start_module(module_id)
-            install_results.append({"module": module_id, "success": True})
-        except Exception as e:
-            install_results.append({"module": module_id, "success": False, "error": str(e)})
-
-    # 4. 生成 Nginx 配置
-    try:
-        ng = NginxGenerator(PROJECT_ROOT)
-        installed_modules = [ml.get_module_by_id(m) for m in cm.get_installed_modules() if ml.get_module_by_id(m)]
-        ng.generate_all(cm.load_config(), installed_modules)
-    except Exception:
-        pass
-
-    # 5. 标记设置完成（网络未配置）
+    # 3. 标记设置完成（不安装任何模块，服务均从应用商店或网络配置按需安装）
     cm.mark_setup_completed()
 
     return {
         "success": True,
-        "install_results": install_results,
-        "message": "初始设置完成，请在管理面板中配置网络访问"
+        "message": "初始设置完成，可在应用商店按需安装服务，或在网络配置中自动安装所需模块"
     }
 
 
@@ -399,7 +371,7 @@ async def configure_network(request: NetworkConfigRequest):
     dm = DockerManager(PROJECT_ROOT)
     ml = ModuleLoader(PROJECT_ROOT)
 
-    if request.access_mode not in ("domain", "cloudflare_tunnel", "ipv6_direct", "hybrid"):
+    if request.access_mode not in ("domain", "cloudflare_tunnel", "ipv6_direct", "hybrid", "custom"):
         raise HTTPException(status_code=400, detail="无效的访问模式")
 
     # 1. 更新配置
@@ -412,6 +384,10 @@ async def configure_network(request: NetworkConfigRequest):
     results = []
 
     # 2. 根据访问模式启停模块
+    # 非 IPv6 模式恢复 BIND_ADDRESS 为 127.0.0.1
+    if request.access_mode != "ipv6_direct":
+        cm.set_env_value("BIND_ADDRESS", "127.0.0.1")
+
     if request.access_mode == "domain":
         # 域名反代：启动 nginx+acme+ddns-go，停止 cloudflare-tunnel
         for mid in ["nginx", "acme", "ddns-go"]:
@@ -482,7 +458,8 @@ async def configure_network(request: NetworkConfigRequest):
                     pass
 
     elif request.access_mode == "ipv6_direct":
-        # IPv6 直连：停止 nginx+acme+cloudflare-tunnel
+        # IPv6 直连：直接用公网 IPv6 地址 + 端口访问，无需域名/DNS/SSL
+        # 停止代理模块（不需要 Nginx/ACME/Tunnel）
         for mid in ["nginx", "acme", "cloudflare-tunnel"]:
             if mid in cm.get_installed_modules():
                 try:
@@ -490,6 +467,20 @@ async def configure_network(request: NetworkConfigRequest):
                     results.append({"module": mid, "action": "stop", "success": True})
                 except Exception:
                     pass
+        # 切换 BIND_ADDRESS 为 ::，监听所有接口（含 IPv6）
+        cm.set_env_value("BIND_ADDRESS", "::")
+        # 重启已安装模块以应用新绑定地址
+        for mid in cm.get_installed_modules():
+            if mid not in ["nginx", "acme", "cloudflare-tunnel"]:
+                try:
+                    dm.restart_module(mid)
+                    results.append({"module": mid, "action": "restart", "success": True})
+                except Exception as e:
+                    results.append({"module": mid, "action": "restart", "success": False, "error": str(e)})
+
+    elif request.access_mode == "custom":
+        # 自由配置：不自动管理任何模块，用户完全自主控制
+        cm.set_env_value("BIND_ADDRESS", "127.0.0.1")
 
     # 3. 生成 Nginx 配置（domain / hybrid 模式）
     if request.access_mode in ("domain", "hybrid"):

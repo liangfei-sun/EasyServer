@@ -30,7 +30,7 @@
     <el-card style="margin-bottom: 20px">
       <template #header><span style="font-weight:600">快捷操作</span></template>
       <div style="display: flex; gap: 12px; flex-wrap: wrap">
-        <el-button type="primary" @click="$router.push('/network-guide')" v-if="!networkConfigured">
+        <el-button type="primary" @click="$router.push('/network')" v-if="!networkConfigured">
           配置网络访问
         </el-button>
         <el-button @click="$router.push('/backup')">立即备份</el-button>
@@ -62,8 +62,8 @@
     </el-row>
 
     <!-- 空状态 -->
-    <el-empty v-if="services.length === 0" description="暂无已安装的服务，去模块市场看看？">
-      <el-button type="primary" @click="$router.push('/market')">前往模块市场</el-button>
+    <el-empty v-if="services.length === 0" description="暂无已安装的服务，去应用商店看看？">
+      <el-button type="primary" @click="$router.push('/market')">前往应用商店</el-button>
     </el-empty>
   </div>
 </template>

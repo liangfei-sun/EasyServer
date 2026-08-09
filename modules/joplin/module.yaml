@@ -21,6 +21,8 @@ config:
     type: password
     default: ""
     required: true
+    auto_generate: true
+    description: "留空将自动生成随机密码，写入 .env 后可查看"
   - key: JOPLIN_DB_USER
     label: "数据库用户名"
     type: string

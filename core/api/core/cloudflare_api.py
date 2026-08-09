@@ -116,12 +116,14 @@ class CloudflareClient:
 
     # ===== DNS 记录管理 =====
 
-    def create_dns_record(self, zone_id: str, name: str, content: str, proxied: bool = True) -> dict:
-        """创建 CNAME 记录（name 为子域名前缀，content 为隧道域名）"""
+    def create_dns_record(self, zone_id: str, name: str, content: str, proxied: bool = True, record_type: str = "CNAME") -> dict:
+        """创建 DNS 记录（name 为完整域名，content 为目标值，type 支持 A/AAAA/CNAME）
+        域名反代场景：A/AAAA 记录需 proxied=False（DNS only，直连服务器 IP）
+        """
         return self._request(
             "POST",
             f"/zones/{zone_id}/dns_records",
-            {"type": "CNAME", "name": name, "content": content, "proxied": proxied},
+            {"type": record_type, "name": name, "content": content, "proxied": proxied, "ttl": 600},
         )
 
     def list_dns_records(self, zone_id: str, name: str = "") -> list:
@@ -130,6 +132,14 @@ class CloudflareClient:
         suffix = f"&name={urllib.parse.quote(name)}" if name else ""
         result = self._request("GET", f"/zones/{zone_id}/dns_records?per_page=100{suffix}")
         return result if isinstance(result, list) else []
+
+    def update_dns_record(self, zone_id: str, record_id: str, name: str, content: str, proxied: bool = False, record_type: str = "A", ttl: int = 600) -> dict:
+        """更新 DNS 记录内容"""
+        return self._request(
+            "PUT",
+            f"/zones/{zone_id}/dns_records/{record_id}",
+            {"type": record_type, "name": name, "content": content, "proxied": proxied, "ttl": ttl},
+        )
 
     def delete_dns_record(self, zone_id: str, record_id: str) -> dict:
         return self._request("DELETE", f"/zones/{zone_id}/dns_records/{record_id}")

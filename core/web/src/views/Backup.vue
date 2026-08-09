@@ -109,7 +109,7 @@
         </div>
       </template>
       <div v-if="!backupStatus.initialized" style="color:#999;text-align:center;padding:20px">
-        备份模块未安装或未初始化，请先在模块市场安装「数据备份」模块。
+        备份模块未安装或未初始化，请先在应用商店安装「数据备份」模块。
       </div>
       <el-table v-else-if="backupStatus.snapshots && backupStatus.snapshots.length > 0" :data="backupStatus.snapshots" stripe size="small" style="width:100%">
         <el-table-column label="时间" width="180">

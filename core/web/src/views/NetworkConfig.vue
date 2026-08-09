@@ -1,0 +1,934 @@
+<template>
+  <div class="network-page">
+    <h2>网络配置</h2>
+    <p class="page-desc">管理域名、访问方式与服务发布</p>
+
+    <!-- 区块1：网络状态总览 -->
+    <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+      <template #header>
+        <div class="card-header-row">
+          <span style="font-weight:600">网络状态</span>
+          <el-tag v-if="isConfigured" :type="statusConnected ? 'success' : 'warning'" size="small">
+            {{ statusConnected ? '已连接' : '已配置' }}
+          </el-tag>
+          <el-tag v-else type="info" size="small">未配置</el-tag>
+        </div>
+      </template>
+      <!-- 兼容旧配置：混合模式已移除，提示建议切换到 Tunnel -->
+      <el-alert
+        v-if="rawAccessMode === 'hybrid'"
+        type="warning"
+        :closable="false"
+        style="margin-bottom: 16px"
+        :title="'当前配置为混合模式（旧版本遗留），实际通过 Cloudflare Tunnel 访问。建议切换到「Cloudflare Tunnel」模式以保持配置一致。'"
+      />
+      <el-descriptions :column="isMobile ? 1 : 2" border>
+        <el-descriptions-item label="访问方式">{{ accessModeLabel }}</el-descriptions-item>
+        <el-descriptions-item label="域名">{{ domain || '未设置' }}</el-descriptions-item>
+        <el-descriptions-item v-if="currentMode === 'cloudflare_tunnel'" label="隧道状态">
+          <el-tag :type="tunnelStatus.connected ? 'success' : 'danger'" size="small">
+            {{ tunnelStatus.connected ? '已连接' : '未连接' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="currentMode === 'cloudflare_tunnel'" label="已发布服务">
+          {{ tunnelStatus.routes?.length || 0 }} 个
+        </el-descriptions-item>
+      </el-descriptions>
+    </el-card>
+
+    <!-- 区块2：当前配置管理 / 智能推荐 -->
+
+    <!-- 场景A：未配置网络 - 智能推荐 -->
+    <template v-if="!isConfigured">
+      <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+        <template #header><span style="font-weight:600">推荐方案</span></template>
+
+        <!-- Tunnel 推荐卡片 -->
+        <div class="scheme-card recommended" :class="{ active: selectedScheme === 'tunnel' }" @click="selectedScheme = 'tunnel'">
+          <div class="scheme-header">
+            <span class="scheme-name">Cloudflare Tunnel</span>
+            <el-tag type="success" size="small">推荐</el-tag>
+          </div>
+          <div class="scheme-desc">无需开放端口，免公网 IP，访问不带端口号</div>
+          <div class="scheme-detect" v-if="detectInfo">
+            <el-tag size="small" type="info">检测到: {{ detectInfo }}</el-tag>
+          </div>
+          <el-button type="primary" size="large" @click.stop="showTunnelSetup = true" style="margin-top: 12px">
+            一键接入
+          </el-button>
+        </div>
+
+        <!-- 域名反代备选卡片 -->
+        <div class="scheme-card" :class="{ active: selectedScheme === 'domain' }" @click="selectedScheme = 'domain'">
+          <div class="scheme-header">
+            <span class="scheme-name">域名反代 (Nginx)</span>
+            <el-tag size="small">备选</el-tag>
+          </div>
+          <div class="scheme-desc">需开放端口，访问需带端口号（如 :8443）</div>
+          <el-button size="large" @click.stop="showDomainSetup = true" style="margin-top: 12px">
+            展开配置
+          </el-button>
+        </div>
+      </el-card>
+    </template>
+
+    <!-- 场景B：Tunnel 已配置 - 管理界面 -->
+    <template v-if="currentMode === 'cloudflare_tunnel' && isConfigured">
+      <!-- 隧道状态卡片 -->
+      <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+        <template #header>
+          <div class="card-header-row">
+            <span style="font-weight:600">隧道状态</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <el-tag :type="tunnelStatus.connected ? 'success' : 'danger'" size="small">
+                {{ tunnelStatus.connected ? '已连接' : '未连接' }}
+              </el-tag>
+              <el-button size="small" @click="loadTunnelStatus">刷新</el-button>
+            </div>
+          </div>
+        </template>
+        <el-descriptions :column="isMobile ? 1 : 2" border>
+          <el-descriptions-item label="隧道名称">{{ tunnelStatus.tunnel_name }}</el-descriptions-item>
+          <el-descriptions-item label="隧道 ID">
+            <span style="font-family:monospace;font-size:12px">{{ tunnelStatus.tunnel_id }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="API Token">
+            <span style="font-family:monospace;font-size:12px">{{ tunnelStatus.api_token_masked }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="主域名">{{ tunnelStatus.domain }}</el-descriptions-item>
+        </el-descriptions>
+        <div v-if="tunnelStatus.error" class="form-help" style="color:#e6a23c; margin-top: 8px">
+          状态查询提示：{{ tunnelStatus.error }}
+        </div>
+        <!-- 重新接入折叠 -->
+        <el-collapse style="margin-top: 16px">
+          <el-collapse-item title="重新接入（更换 Token 或重新配置隧道）">
+            <el-form label-width="100px">
+              <el-form-item label="API Token">
+                <el-input v-model="reconnectToken" placeholder="粘贴新的 Cloudflare API Token" type="password" show-password />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" size="small" :loading="reconnecting" @click="handleReconnect">
+                  重新接入
+                </el-button>
+              </el-form-item>
+            </el-form>
+          </el-collapse-item>
+        </el-collapse>
+      </el-card>
+
+      <!-- 服务发布卡片 -->
+      <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+        <template #header><span style="font-weight:600">服务发布</span></template>
+        <el-tabs v-model="publishTab">
+          <el-tab-pane :label="`已发布 (${tunnelStatus.routes?.length || 0})`" name="published">
+            <el-empty v-if="!tunnelStatus.routes?.length" description="暂无已发布的服务" :image-size="60" />
+            <div v-for="r in tunnelStatus.routes" :key="r.hostname" class="route-row">
+              <div class="route-info">
+                <a :href="'https://' + r.hostname" target="_blank" class="route-link">https://{{ r.hostname }}</a>
+                <span class="route-service">{{ r.service }}</span>
+              </div>
+              <el-button type="danger" size="small" plain @click="unpublishRoute(r.hostname)">取消发布</el-button>
+            </div>
+          </el-tab-pane>
+          <el-tab-pane :label="`可发布 (${tunnelStatus.services?.length || 0})`" name="available">
+            <el-table :data="tunnelStatus.services" size="small" empty-text="暂无可以发布的服务">
+              <el-table-column prop="name" label="服务" min-width="140" />
+              <el-table-column prop="hostname" label="访问地址" min-width="160">
+                <template #default="{ row }">
+                  <span v-if="row.hostname">{{ row.hostname }}</span>
+                  <span v-else style="color:#909399">未配置域名</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="port" label="端口" width="70" />
+              <el-table-column label="操作" width="110">
+                <template #default="{ row }">
+                  <el-button v-if="row.published" type="success" size="small" disabled>已发布</el-button>
+                  <el-button v-else type="primary" size="small" :loading="publishingId === row.module" @click="publishService(row)">
+                    发布
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="form-help" style="margin-top: 8px">
+              发布后自动创建路由和 DNS 记录，通过 https://子域名.域名 访问（免端口号）
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </el-card>
+    </template>
+
+    <!-- 场景C：域名反代已配置 - 管理界面 -->
+    <template v-if="currentMode === 'domain' && isConfigured">
+      <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+        <template #header><span style="font-weight:600">域名反代配置</span></template>
+        <el-form :model="domainForm" label-width="120px">
+          <el-form-item label="DNS 提供商">
+            <el-select v-model="domainForm.dns_provider" style="width: 100%" @change="onDnsProviderChange">
+              <el-option v-for="p in dnsProviders" :key="p.id" :label="p.name" :value="p.id">
+                <span>{{ p.name }}</span>
+                <span style="color: #909399; font-size: 12px; margin-left: 8px">{{ p.acme_plugin || '自定义插件' }}</span>
+              </el-option>
+            </el-select>
+            <div class="form-help">{{ currentDnsProvider?.description }}</div>
+          </el-form-item>
+          <template v-if="currentDnsProvider">
+            <el-form-item v-for="f in currentDnsProvider.fields" :key="f.key" :label="f.label">
+              <el-input
+                v-if="f.type !== 'textarea'"
+                v-model="dnsCredentials[domainForm.dns_provider][f.key]"
+                type="password" show-password
+                :placeholder="dnsConfigured[domainForm.dns_provider]?.[f.key] ? '已配置，留空保持不变' : (f.placeholder || '请输入')"
+              />
+              <el-input v-else v-model="dnsCredentials[domainForm.dns_provider][f.key]" type="textarea" :rows="4" :placeholder="f.placeholder" />
+              <div class="form-help" v-if="f.help">
+                {{ f.help }}
+                <a v-if="currentDnsProvider.help_url" :href="currentDnsProvider.help_url" target="_blank" style="margin-left:4px;color:#409eff">前往创建</a>
+              </div>
+              <el-tag v-if="dnsConfigured[domainForm.dns_provider]?.[f.key]" type="success" size="small" style="margin-top: 4px">
+                已配置（留空则不修改）
+              </el-tag>
+            </el-form-item>
+          </template>
+          <el-form-item label="HTTPS 端口">
+            <el-input-number v-model="domainForm.https_port" :min="1" :max="65535" />
+          </el-form-item>
+          <el-form-item label="管理面板子域名">
+            <el-input v-model="domainForm.panel_subdomain" placeholder="panel">
+              <template #append>.{{ domain }}</template>
+            </el-input>
+          </el-form-item>
+          <el-form-item label="SSL 证书">
+            <div style="display:flex;align-items:center;gap:8px">
+              <el-tag :type="sslValid ? 'success' : 'warning'" size="small">{{ sslValid ? '有效' : '未配置' }}</el-tag>
+              <span v-if="sslExpiry" style="font-size:12px;color:#909399">到期: {{ sslExpiry }}</span>
+              <el-button size="small" @click="checkSSL" :loading="sslChecking">刷新</el-button>
+            </div>
+          </el-form-item>
+          <el-form-item label="DNS 记录同步">
+            <div style="width:100%">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <el-tag v-if="dnsSync.ipv4" type="success" size="small">IPv4: {{ dnsSync.ipv4 }}</el-tag>
+                <el-tag v-if="dnsSync.ipv6" type="info" size="small">IPv6: {{ dnsSync.ipv6 }}</el-tag>
+                <el-button size="small" type="success" @click="syncDns" :loading="dnsSyncing">
+                  立即同步 DNS 记录
+                </el-button>
+              </div>
+              <div class="form-help" style="margin-top:4px">
+                自动为所有服务子域名创建 A / AAAA 解析记录（指向服务器公网 IP），无需登录 DNS 网站手动配置
+              </div>
+              <!-- 同步结果 -->
+              <el-alert
+                v-if="dnsSyncResult.summary"
+                :type="dnsSyncResult.summary.failed ? 'warning' : 'success'"
+                :closable="false"
+                style="margin-top:8px"
+                :title="`同步完成：新建 ${dnsSyncResult.summary.created} 条，更新 ${dnsSyncResult.summary.updated} 条，无变化 ${dnsSyncResult.summary.unchanged} 条，失败 ${dnsSyncResult.summary.failed} 条`"
+              />
+              <div v-if="dnsSyncResult.failures?.length" style="margin-top:6px">
+                <div v-for="(f, i) in dnsSyncResult.failures" :key="i" class="form-help" style="color:#f56c6c">
+                  {{ f.subdomain }} ({{ f.type }}): {{ f.error }}
+                </div>
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="saveDomainConfig" :loading="savingDomain">保存并应用</el-button>
+            <el-button @click="regenerateNginx">重新生成 Nginx 配置</el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </template>
+
+    <!-- 场景D：IPv6 直连已配置 -->
+    <template v-if="currentMode === 'ipv6_direct' && isConfigured">
+      <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+        <template #header><span style="font-weight:600">IPv6 直连</span></template>
+        <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+          服务端口直接暴露在公网，通过 <code>http://[公网IPv6]:端口</code> 访问各服务，无需域名和 DNS。
+        </el-alert>
+        <el-table :data="serviceList" size="small" empty-text="暂无已安装的服务">
+          <el-table-column prop="name" label="服务" min-width="120" />
+          <el-table-column prop="port" label="端口" width="80" />
+          <el-table-column label="访问地址" min-width="200">
+            <template #default="{ row }">
+              <span v-if="ipv6Addr" style="font-family:monospace;font-size:12px">http://[{{ ipv6Addr }}]:{{ row.port }}</span>
+              <span v-else style="color:#909399">未检测到 IPv6 地址</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </template>
+
+    <!-- 场景E：自由配置已配置 -->
+    <template v-if="currentMode === 'custom' && isConfigured">
+      <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+        <template #header><span style="font-weight:600">自由配置</span></template>
+        <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+          自由配置模式不会自动管理网络模块，你可以从应用商店自行安装和配置所需服务。
+        </el-alert>
+        <div style="margin-bottom: 12px; display: flex; gap: 8px">
+          <el-button type="primary" size="small" @click="$router.push('/market')">前往应用商店</el-button>
+          <el-button size="small" @click="regenerateNginx">重新生成 Nginx 配置</el-button>
+        </div>
+        <el-table :data="networkModules" size="small" empty-text="暂无网络模块">
+          <el-table-column prop="name" label="模块" min-width="120" />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.running ? 'success' : 'info'" size="small">{{ row.running ? '运行中' : '已停止' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="160">
+            <template #default="{ row }">
+              <el-button v-if="row.running" type="warning" size="small" @click="stopModule(row.id)">停止</el-button>
+              <el-button v-else type="primary" size="small" @click="startModule(row.id)">启动</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </template>
+
+    <!-- 区块3：高级选项（折叠区） -->
+    <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+      <el-collapse>
+        <el-collapse-item title="高级选项">
+          <div class="advanced-section">
+            <div class="advanced-item">
+              <div class="advanced-title">IPv6 直连</div>
+              <div class="advanced-desc">直接用公网 IPv6 地址访问，无需域名和 DNS。通过 <code>http://[IPv6]:端口</code> 访问各服务。</div>
+              <el-button size="small" :disabled="currentMode === 'ipv6_direct'" @click="switchMode('ipv6_direct')">
+                {{ currentMode === 'ipv6_direct' ? '当前使用' : '切换到 IPv6 直连' }}
+              </el-button>
+            </div>
+            <el-divider />
+            <div class="advanced-item">
+              <div class="advanced-title">自由配置</div>
+              <div class="advanced-desc">不自动管理网络模块，自行从应用商店安装和配置所需服务。</div>
+              <el-button size="small" :disabled="currentMode === 'custom'" @click="switchMode('custom')">
+                {{ currentMode === 'custom' ? '当前使用' : '切换到自由配置' }}
+              </el-button>
+            </div>
+            <el-divider v-if="isConfigured" />
+            <div class="advanced-item" v-if="isConfigured">
+              <div class="advanced-title">切换访问方式</div>
+              <div class="advanced-desc">更改当前的访问方式，切换后可能会停止或启动相关模块。</div>
+              <div style="display:flex;gap:8px;margin-top:8px">
+                <el-button size="small" :disabled="currentMode === 'cloudflare_tunnel'" @click="switchMode('cloudflare_tunnel')">
+                  Cloudflare Tunnel
+                </el-button>
+                <el-button size="small" :disabled="currentMode === 'domain'" @click="switchMode('domain')">
+                  域名反代
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
+    </el-card>
+
+    <!-- 区块4：域名信息（底部） -->
+    <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
+      <template #header><span style="font-weight:600">域名信息</span></template>
+      <el-form label-width="100px">
+        <el-form-item label="主域名">
+          <el-input v-model="domainInput" placeholder="example.com" />
+        </el-form-item>
+        <el-form-item label="SSL 邮箱">
+          <el-input v-model="sslEmailInput" placeholder="admin@example.com" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="saveDomain" :loading="savingDomainInfo">保存域名</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- Tunnel 一键接入弹窗 -->
+    <el-dialog v-model="showTunnelSetup" title="Cloudflare Tunnel 一键接入" :width="isMobile ? '95%' : '680px'" top="5vh" :close-on-click-modal="false">
+      <el-steps :active="setupStep" align-center finish-status="success" style="margin-bottom: 20px">
+        <el-step title="创建 API Token" />
+        <el-step title="粘贴并验证" />
+        <el-step title="自动接入" />
+      </el-steps>
+      <el-alert type="info" :closable="false" style="margin-bottom: 16px">
+        <p style="margin: 0 0 8px"><b>只需在 Cloudflare 做一次操作</b>：创建一个 API Token，其余全部由 EasyServer 自动完成。</p>
+        <ol style="margin: 0; padding-left: 20px; line-height: 1.8">
+          <li>打开 <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" style="color:#409eff">Cloudflare API Tokens</a></li>
+          <li>点击 <b>Create Token</b> → 添加权限：<code>Account · Cloudflare Tunnel · Edit</code> + <code>Zone · DNS · Edit</code></li>
+          <li>复制生成的 Token 粘贴到下方</li>
+        </ol>
+      </el-alert>
+      <el-form label-width="100px">
+        <el-form-item label="API Token" required>
+          <el-input v-model="apiToken" placeholder="粘贴 Cloudflare API Token" type="password" show-password size="large" />
+        </el-form-item>
+        <el-form-item label="域名">
+          <el-input :model-value="domain" disabled size="large" />
+        </el-form-item>
+        <el-collapse style="margin-bottom: 12px">
+          <el-collapse-item title="高级选项（手动指定 Account ID，可选）">
+            <el-input v-model="accountId" placeholder="如自动获取失败，粘贴 Account ID" />
+          </el-collapse-item>
+        </el-collapse>
+        <el-form-item>
+          <el-button type="primary" size="large" :loading="verifying" @click="handleVerify">验证 Token</el-button>
+          <el-button type="success" size="large" :loading="settingUp" :disabled="!verified" @click="handleSetup">一键接入</el-button>
+        </el-form-item>
+      </el-form>
+      <!-- 验证结果 -->
+      <div v-if="verifyResult" style="margin-top: 8px">
+        <el-result v-if="verifyResult.valid" icon="success" title="Token 有效" sub-title="点击「一键接入」自动创建隧道并发布服务" />
+        <el-alert v-else type="error" :closable="false" :title="'Token 无效：' + (verifyResult.error || '未知错误')" />
+      </div>
+      <!-- 接入日志 -->
+      <div v-if="setupLogs.length" style="margin-top: 12px">
+        <div v-for="(log, i) in setupLogs" :key="i" class="log-line">
+          <el-tag :type="log.ok ? 'success' : 'danger'" size="small">{{ log.ok ? '✓' : '✗' }}</el-tag>
+          <span>{{ log.msg }}</span>
+        </div>
+        <el-alert v-if="setupDone" type="success" :closable="false" title="接入完成！" style="margin-top: 8px" />
+        <el-alert v-if="setupWarning" type="warning" :closable="false" :title="setupWarning" style="margin-top: 8px" />
+      </div>
+    </el-dialog>
+
+    <!-- 域名反代配置弹窗 -->
+    <el-dialog v-model="showDomainSetup" title="域名反代配置" :width="isMobile ? '95%' : '680px'" top="5vh" :close-on-click-modal="false">
+      <el-form :model="domainForm" label-width="120px">
+        <el-form-item label="DNS 提供商">
+          <el-select v-model="domainForm.dns_provider" style="width: 100%" @change="onDnsProviderChange">
+            <el-option v-for="p in dnsProviders" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <template v-if="currentDnsProvider">
+          <el-form-item v-for="f in currentDnsProvider.fields" :key="f.key" :label="f.label">
+            <el-input
+              v-if="f.type !== 'textarea'"
+              v-model="dnsCredentials[domainForm.dns_provider][f.key]"
+              type="password" show-password
+              :placeholder="f.placeholder || '请输入'"
+            />
+            <el-input v-else v-model="dnsCredentials[domainForm.dns_provider][f.key]" type="textarea" :rows="3" :placeholder="f.placeholder" />
+            <div class="form-help" v-if="f.help">{{ f.help }}</div>
+          </el-form-item>
+        </template>
+        <el-form-item label="HTTPS 端口">
+          <el-input-number v-model="domainForm.https_port" :min="1" :max="65535" />
+        </el-form-item>
+        <el-form-item label="SSL 邮箱">
+          <el-input v-model="domainForm.ssl_email" placeholder="admin@example.com" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="applyDomainMode" :loading="savingDomain">保存并应用</el-button>
+        </el-form-item>
+      </el-form>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import api from '../api'
+
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
+onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
+
+// ===== 基础状态 =====
+const domain = ref('')
+const domainInput = ref('')
+const sslEmailInput = ref('')
+const currentMode = ref('domain')
+const rawAccessMode = ref('') // 原始访问模式（兼容旧配置 hybrid）
+const isConfigured = ref(false)
+const savingDomainInfo = ref(false)
+
+const accessModeLabels = {
+  cloudflare_tunnel: 'Cloudflare Tunnel',
+  domain: '域名反代 (Nginx)',
+  ipv6_direct: 'IPv6 直连',
+  custom: '自由配置',
+  hybrid: '混合模式'
+}
+const accessModeLabel = computed(() => accessModeLabels[currentMode.value] || '未配置')
+
+// ===== 智能推荐 =====
+const selectedScheme = ref('tunnel')
+const detectInfo = ref('')
+const showTunnelSetup = ref(false)
+const showDomainSetup = ref(false)
+
+// ===== Tunnel 状态 =====
+const tunnelStatus = ref({ configured: false, connected: false, routes: [], services: [] })
+const publishTab = ref('published')
+const publishingId = ref('')
+const reconnectToken = ref('')
+const reconnecting = ref(false)
+
+// Tunnel 接入状态
+const apiToken = ref('')
+const accountId = ref('')
+const verifying = ref(false)
+const settingUp = ref(false)
+const verified = ref(false)
+const verifyResult = ref(null)
+const setupStep = ref(0)
+const setupLogs = ref([])
+const setupDone = ref(false)
+const setupWarning = ref('')
+
+const statusConnected = computed(() => {
+  if (currentMode.value === 'cloudflare_tunnel') return tunnelStatus.value.connected
+  return isConfigured.value
+})
+
+// ===== 域名反代配置 =====
+const domainForm = ref({
+  dns_provider: 'aliyun', https_port: 8443, ssl_email: '', panel_subdomain: 'panel'
+})
+const dnsProviders = ref([])
+const dnsCredentials = ref({ aliyun: {}, cloudflare: {} })
+const dnsConfigured = ref({})
+const savingDomain = ref(false)
+const sslValid = ref(false)
+const sslExpiry = ref('')
+const sslChecking = ref(false)
+
+const currentDnsProvider = computed(() =>
+  dnsProviders.value.find(p => p.id === domainForm.value.dns_provider) || null
+)
+
+// ===== DNS 记录同步 =====
+const dnsSync = ref({ ipv4: '', ipv6: '' })
+const dnsSyncing = ref(false)
+const dnsSyncResult = ref({})
+
+const loadDnsStatus = async () => {
+  try {
+    const { data } = await api.get('/dns/status')
+    dnsSync.value = { ipv4: data.public_ipv4 || '', ipv6: data.public_ipv6 || '' }
+  } catch { /* 忽略 */ }
+}
+
+const syncDns = async () => {
+  dnsSyncing.value = true
+  try {
+    const { data } = await api.post('/dns/sync')
+    const summary = data.summary || {}
+    dnsSyncResult.value = {
+      summary,
+      failures: (data.results || []).filter(r => !r.success)
+    }
+    if (summary.failed) {
+      ElMessage.warning(`DNS 同步完成，但 ${summary.failed} 条记录失败，请检查凭证`)
+    } else {
+      ElMessage.success(`DNS 同步完成：新建 ${summary.created} 条，更新 ${summary.updated} 条，无变化 ${summary.unchanged} 条`)
+    }
+    loadDnsStatus()
+  } catch (e) {
+    ElMessage.error('DNS 同步失败: ' + (e.response?.data?.detail || e.message))
+  }
+  dnsSyncing.value = false
+}
+
+// ===== IPv6 =====
+const ipv6Addr = ref('')
+const serviceList = ref([])
+
+// ===== 自由配置 =====
+const networkModules = ref([])
+
+// ===== 数据加载 =====
+const loadConfig = async () => {
+  try {
+    const { data } = await api.get('/config')
+    const cfg = data.config || {}
+    const env = data.env_summary || {}
+    domain.value = env.DOMAIN || cfg.domain || ''
+    domainInput.value = domain.value
+    sslEmailInput.value = cfg.ssl_email || ''
+    // 兼容旧配置：hybrid 已移除，实际以 Tunnel 为主，归一化为 cloudflare_tunnel
+    const rawMode = env.ACCESS_MODE || cfg.access_mode || 'domain'
+    rawAccessMode.value = rawMode
+    currentMode.value = rawMode === 'hybrid' ? 'cloudflare_tunnel' : rawMode
+    isConfigured.value = !!data.network_configured || !!cfg.network_configured
+
+    // DNS 提供商
+    dnsProviders.value = data.dns_providers || []
+    const masked = data.dns_credentials || {}
+    const configured = data.dns_credentials_configured || {}
+    dnsProviders.value.forEach(p => {
+      if (!dnsCredentials.value[p.id]) dnsCredentials.value[p.id] = {}
+      if (!dnsConfigured.value[p.id]) dnsConfigured.value[p.id] = {}
+      p.fields.forEach(f => {
+        dnsCredentials.value[p.id][f.key] = masked[p.id]?.[f.key] || ''
+        dnsConfigured.value[p.id][f.key] = !!configured[p.id]?.[f.key]
+      })
+    })
+
+    domainForm.value.dns_provider = cfg.dns_provider || 'aliyun'
+    domainForm.value.https_port = parseInt(env.HTTPS_PORT) || cfg.https_port || 8443
+    domainForm.value.ssl_email = cfg.ssl_email || ''
+    domainForm.value.panel_subdomain = cfg.panel_subdomain || 'panel'
+
+    // 检测信息
+    if (domain.value) {
+      detectInfo.value = `域名 ${domain.value} 已配置`
+    }
+
+    // SSL 状态
+    const ssl = data.ssl_status || {}
+    sslValid.value = !!ssl.ssl_valid
+    sslExpiry.value = ssl.ssl_expiry || ''
+  } catch (e) {
+    ElMessage.error('加载配置失败')
+  }
+}
+
+const loadTunnelStatus = async () => {
+  try {
+    const { data } = await api.get('/cloudflare/status')
+    tunnelStatus.value = data
+  } catch (e) {
+    // Tunnel 未配置时忽略错误
+  }
+}
+
+const loadServices = async () => {
+  try {
+    const { data } = await api.get('/services')
+    serviceList.value = (data.services || [])
+      .filter(s => s.port)
+      .map(s => ({ name: s.name || s.module, port: s.port }))
+
+    // 加载网络模块状态（自由配置模式用）
+    const netIds = ['nginx', 'acme', 'ddns-go', 'cloudflare-tunnel']
+    networkModules.value = (data.services || [])
+      .filter(s => netIds.includes(s.module))
+      .map(s => ({ id: s.module, name: s.name || s.module, running: s.running }))
+  } catch (e) { /* ignore */ }
+}
+
+const detectIPv6 = async () => {
+  // 简单检测：尝试获取 IPv6 地址
+  try {
+    const { data } = await api.get('/config')
+    // 从环境检测，或调用外部接口
+    // 这里简单用 config 数据判断
+    ipv6Addr.value = '' // 暂时留空，后续可扩展
+  } catch { /* ignore */ }
+}
+
+// ===== Tunnel 接入逻辑（迁移自 TunnelManager）=====
+const handleVerify = async () => {
+  if (!apiToken.value) { ElMessage.warning('请先粘贴 API Token'); return }
+  verifying.value = true
+  verifyResult.value = null
+  try {
+    const { data } = await api.post('/cloudflare/verify', { api_token: apiToken.value })
+    verifyResult.value = data
+    if (data.valid) { verified.value = true; setupStep.value = 1 }
+    if (data.account_id && !accountId.value) accountId.value = data.account_id
+  } catch (e) {
+    verifyResult.value = { valid: false, error: e.response?.data?.detail || e.message }
+    verified.value = false
+  }
+  verifying.value = false
+}
+
+const handleSetup = async () => {
+  if (!apiToken.value) return
+  settingUp.value = true
+  setupLogs.value = []
+  setupDone.value = false
+  setupWarning.value = ''
+  setupStep.value = 2
+  try {
+    setupLogs.value.push({ msg: '正在创建/复用隧道...', ok: true })
+    const payload = { api_token: apiToken.value }
+    if (accountId.value) payload.account_id = accountId.value
+    const { data } = await api.post('/cloudflare/setup', payload)
+    setupLogs.value.push({ msg: `隧道就绪：${data.tunnel_name} (${data.tunnel_id})`, ok: true })
+    if (data.zone_warning) {
+      setupWarning.value = data.zone_warning
+      setupLogs.value.push({ msg: data.zone_warning, ok: false })
+    }
+    const failed = (data.results || []).filter(r => !r.success)
+    if (failed.length) {
+      setupLogs.value.push({ msg: '容器启动失败: ' + (failed[0].error || '未知错误'), ok: false })
+    } else {
+      setupLogs.value.push({ msg: 'cloudflare-tunnel 容器已启动', ok: true })
+    }
+    setupDone.value = true
+    setupStep.value = 3
+    setTimeout(() => {
+      loadTunnelStatus()
+      loadConfig()
+    }, 3000)
+    ElMessage.success('接入完成！请等待隧道连接后发布服务')
+  } catch (e) {
+    setupLogs.value.push({ msg: '接入失败: ' + (e.response?.data?.detail || e.message), ok: false })
+    setupDone.value = false
+  }
+  settingUp.value = false
+}
+
+const handleReconnect = async () => {
+  if (!reconnectToken.value) { ElMessage.warning('请输入新的 API Token'); return }
+  reconnecting.value = true
+  try {
+    apiToken.value = reconnectToken.value
+    verified.value = false
+    setupStep.value = 0
+    setupLogs.value = []
+    await handleVerify()
+    if (verified.value) {
+      await handleSetup()
+    }
+    reconnectToken.value = ''
+  } finally {
+    reconnecting.value = false
+  }
+}
+
+const publishService = async (row) => {
+  publishingId.value = row.module
+  try {
+    const { data } = await api.post('/cloudflare/publish', {
+      subdomain: row.subdomain, port: row.port
+    })
+    ElMessage.success(data.message || '发布成功')
+    if (data.dns_warning) ElMessage.warning(data.dns_warning)
+    loadTunnelStatus()
+  } catch (e) {
+    ElMessage.error('发布失败: ' + (e.response?.data?.detail || e.message))
+  }
+  publishingId.value = ''
+}
+
+const unpublishRoute = async (hostname) => {
+  try { await ElMessageBox.confirm(`确定取消发布 ${hostname}？`, '确认操作') } catch { return }
+  try {
+    const { data } = await api.post('/cloudflare/unpublish', { hostname })
+    ElMessage.success(`已取消发布 ${hostname}`)
+    if (data.warnings?.length) data.warnings.forEach(w => ElMessage.warning(w))
+    loadTunnelStatus()
+  } catch (e) {
+    ElMessage.error('操作失败: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+// ===== 域名反代配置 =====
+const onDnsProviderChange = () => {
+  if (!dnsCredentials.value[domainForm.value.dns_provider]) {
+    dnsCredentials.value[domainForm.value.dns_provider] = {}
+    dnsConfigured.value[domainForm.value.dns_provider] = {}
+    const p = currentDnsProvider.value
+    if (p) {
+      p.fields.forEach(f => {
+        dnsCredentials.value[domainForm.value.dns_provider][f.key] = ''
+        dnsConfigured.value[domainForm.value.dns_provider][f.key] = false
+      })
+    }
+  }
+}
+
+const applyDomainMode = async () => {
+  savingDomain.value = true
+  try {
+    const provider = domainForm.value.dns_provider
+    const creds = {}
+    const p = currentDnsProvider.value
+    if (p) {
+      p.fields.forEach(f => {
+        const v = dnsCredentials.value[provider]?.[f.key]
+        if (v && !v.startsWith('***')) creds[f.key] = v
+      })
+    }
+    await api.post('/config/network', {
+      access_mode: 'domain',
+      dns_provider: provider,
+      dns_credentials: { [provider]: creds },
+      https_port: domainForm.value.https_port
+    })
+    showDomainSetup.value = false
+    ElMessage.success('域名反代已配置并应用')
+    loadConfig()
+    loadDnsStatus()
+  } catch (e) {
+    ElMessage.error('配置失败: ' + (e.response?.data?.detail || e.message))
+  }
+  savingDomain.value = false
+}
+
+const saveDomainConfig = async () => {
+  savingDomain.value = true
+  try {
+    const provider = domainForm.value.dns_provider
+    const creds = {}
+    const p = currentDnsProvider.value
+    if (p) {
+      p.fields.forEach(f => {
+        const v = dnsCredentials.value[provider]?.[f.key]
+        if (v && !v.startsWith('***')) creds[f.key] = v
+      })
+    }
+    await api.put('/config', {
+      dns_provider: provider,
+      dns_credentials: { [provider]: creds },
+      https_port: domainForm.value.https_port,
+      panel_subdomain: domainForm.value.panel_subdomain,
+      ssl_email: domainForm.value.ssl_email
+    })
+    await api.post('/nginx/generate')
+    ElMessage.success('配置已保存并应用')
+    loadConfig()
+    loadDnsStatus()
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message))
+  }
+  savingDomain.value = false
+}
+
+const regenerateNginx = async () => {
+  try {
+    await api.post('/nginx/generate')
+    ElMessage.success('Nginx 配置已重新生成')
+  } catch (e) {
+    ElMessage.error('生成失败: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+const checkSSL = async () => {
+  sslChecking.value = true
+  try {
+    const { data } = await api.get('/config')
+    const ssl = data.ssl_status || {}
+    sslValid.value = !!ssl.ssl_valid
+    sslExpiry.value = ssl.ssl_expiry || ''
+  } catch {
+    sslValid.value = false; sslExpiry.value = ''
+  }
+  sslChecking.value = false
+}
+
+// ===== 域名保存 =====
+const saveDomain = async () => {
+  const oldDomain = domain.value
+  const newDomain = domainInput.value.trim()
+  if (!newDomain) { ElMessage.warning('域名不能为空'); return }
+
+  if (oldDomain && oldDomain !== newDomain && isConfigured.value) {
+    try {
+      await ElMessageBox.confirm(
+        `域名将从 ${oldDomain} 变更为 ${newDomain}。\n\n以下配置需要手动更新：\n• Tunnel 已发布路由（需重新发布）\n• DNS 记录\n• Nginx 反代配置（需重新生成）\n• SSL 证书（需重新签发）\n\n确定要继续吗？`,
+        '域名变更确认',
+        { confirmButtonText: '继续变更', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch { return }
+  }
+
+  savingDomainInfo.value = true
+  try {
+    await api.put('/config', { domain: newDomain, ssl_email: sslEmailInput.value })
+    domain.value = newDomain
+    ElMessage.success('域名已保存')
+    if (oldDomain && oldDomain !== newDomain) {
+      ElMessage.info('请重新配置网络访问相关设置')
+    }
+    loadConfig()
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message))
+  }
+  savingDomainInfo.value = false
+}
+
+// ===== 切换模式 =====
+const switchMode = async (mode) => {
+  const modeLabel = accessModeLabels[mode] || mode
+  try {
+    await ElMessageBox.confirm(
+      `确定切换到「${modeLabel}」？\n切换后可能会停止当前正在使用的网络模块。`,
+      '切换访问方式',
+      { confirmButtonText: '确认切换', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+
+  try {
+    await api.post('/config/network', { access_mode: mode })
+    ElMessage.success(`已切换到 ${modeLabel}`)
+    loadConfig()
+    loadTunnelStatus()
+  } catch (e) {
+    ElMessage.error('切换失败: ' + (e.response?.data?.detail || e.message))
+  }
+}
+
+// ===== 自由配置模块操作 =====
+const startModule = async (moduleId) => {
+  try {
+    await api.post(`/services/${moduleId}/start`)
+    ElMessage.success(`${moduleId} 已启动`)
+    loadServices()
+  } catch (e) { ElMessage.error('启动失败: ' + (e.response?.data?.detail || e.message)) }
+}
+
+const stopModule = async (moduleId) => {
+  try {
+    await ElMessageBox.confirm(`确定停止 ${moduleId}？`, '确认操作')
+  } catch { return }
+  try {
+    await api.post(`/services/${moduleId}/stop`)
+    ElMessage.success(`${moduleId} 已停止`)
+    loadServices()
+  } catch (e) { ElMessage.error('停止失败: ' + (e.response?.data?.detail || e.message)) }
+}
+
+// ===== 初始化 =====
+onMounted(async () => {
+  await loadConfig()
+  loadTunnelStatus()
+  loadServices()
+  detectIPv6()
+  loadDnsStatus()
+})
+</script>
+
+<style scoped>
+.network-page { max-width: 840px; }
+.page-desc { color: #909399; margin: 4px 0 20px; font-size: 14px; }
+.card-header-row { display: flex; justify-content: space-between; align-items: center; }
+
+.scheme-card {
+  padding: 20px; border: 2px solid #e4e7ed; border-radius: 12px;
+  cursor: pointer; transition: all 0.2s; margin-bottom: 12px;
+}
+.scheme-card:hover { border-color: #409eff; background: #f5f7fa; }
+.scheme-card.active { border-color: #409eff; background: #ecf5ff; }
+.scheme-card.recommended { border-color: #67c23a; }
+.scheme-card.recommended.active { border-color: #67c23a; background: #f0f9eb; }
+.scheme-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.scheme-name { font-weight: 600; font-size: 15px; }
+.scheme-desc { font-size: 13px; color: #909399; }
+.scheme-detect { margin-top: 8px; }
+
+.route-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid #f0f2f5;
+}
+.route-row:last-child { border-bottom: none; }
+.route-info { display: flex; flex-direction: column; gap: 2px; }
+.route-link { color: #409eff; font-weight: 600; font-size: 13px; }
+.route-service { font-size: 12px; color: #909399; font-family: monospace; }
+
+.log-line { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+
+.form-help { font-size: 12px; color: #909399; margin-top: 4px; line-height: 1.5; }
+.form-help a { color: #409eff; text-decoration: none; }
+
+.advanced-section { padding: 4px 0; }
+.advanced-item { padding: 8px 0; }
+.advanced-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.advanced-desc { font-size: 13px; color: #909399; margin-bottom: 8px; line-height: 1.5; }
+.advanced-desc code { background: #f0f2f5; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+</style>

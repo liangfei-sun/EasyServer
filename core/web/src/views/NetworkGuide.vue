@@ -87,6 +87,11 @@
           </el-form-item>
         </el-form>
 
+        <el-alert type="info" :closable="false" style="margin-top: 8px">
+          确认配置后将自动安装对应网络模块：域名反代 → Nginx / SSL / DDNS，隧道 → Cloudflare Tunnel。
+          若已安装则直接启动。
+        </el-alert>
+
         <div class="form-actions">
           <el-button @click="configuring = false">返回</el-button>
           <el-button type="primary" @click="applyConfig" :loading="applying" :disabled="!canApply">

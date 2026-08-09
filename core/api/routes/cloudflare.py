@@ -294,7 +294,7 @@ async def status():
             "published": hostname in [r["hostname"] for r in routes],
         })
 
-    # 管理面板（核心服务，不在模块列表中，单独加入）
+    # 管理面板（非服务模块，不在模块列表中，单独加入）
     panel_subdomain = cm.get_config_value("panel_subdomain", "panel") or "panel"
     panel_hostname = f"{panel_subdomain}.{domain}" if domain else ""
     services.append({

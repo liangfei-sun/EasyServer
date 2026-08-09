@@ -27,13 +27,13 @@
           <el-icon><Setting /></el-icon>
           <span>服务管理</span>
         </el-menu-item>
-        <el-menu-item index="/tunnel">
-          <el-icon><Promotion /></el-icon>
-          <span>内网穿透</span>
+        <el-menu-item index="/network">
+          <el-icon><Connection /></el-icon>
+          <span>网络配置</span>
         </el-menu-item>
         <el-menu-item index="/market">
           <el-icon><ShoppingCart /></el-icon>
-          <span>模块市场</span>
+          <span>应用商店</span>
         </el-menu-item>
         <el-menu-item index="/backup">
           <el-icon><FolderOpened /></el-icon>
@@ -78,7 +78,7 @@ const setupCompleted = ref(null) // null = 未检测, true/false
 const isLoggedIn = ref(false)
 
 // 无侧边栏的页面
-const fullScreenPages = ['/setup', '/login', '/network-guide']
+const fullScreenPages = ['/setup', '/login']
 const showLayout = computed(() => !fullScreenPages.includes(route.path))
 
 const checkMobile = () => {

@@ -25,13 +25,15 @@ config:
     type: password
     default: ""
     required: false
-    description: "启用认证时必须设置密码"
+    auto_generate: true
+    description: "启用认证时必须设置密码，留空将自动生成"
   - key: NOTEDISCOVERY_SECRET_KEY
     label: "会话密钥"
     type: password
     default: ""
     required: false
-    description: "用于加密会话的随机字符串"
+    auto_generate: true
+    description: "用于加密会话的随机字符串，留空将自动生成"
 
 access:
   subdomain: notes
