@@ -1,0 +1,108 @@
+id: nextcloud
+name: "Nextcloud 私有云盘"
+version: "1.0"
+description: "开源私有云盘，支持多端文件同步、在线预览、外链分享、WebDAV 与相册备份"
+category: files
+author: community
+
+depends_on: []
+soft_depends_on:
+  - nginx
+  - acme
+
+config:
+  - key: NEXTCLOUD_PORT
+    label: "服务端口"
+    type: number
+    default: 8888
+    required: true
+  - key: NEXTCLOUD_ADMIN_USER
+    label: "管理员用户名"
+    type: string
+    default: admin
+    required: true
+  - key: NEXTCLOUD_ADMIN_PASSWORD
+    label: "管理员密码"
+    type: password
+    default: ""
+    required: true
+    auto_generate: true
+    description: "仅首次初始化时生效，留空将自动生成随机密码，写入 .env 后可查看"
+  - key: NEXTCLOUD_TRUSTED_DOMAINS
+    label: "访问域名（信任域）"
+    type: string
+    default: "cloud.lfblog.top"
+    required: true
+    description: "浏览器访问的域名，多个域名用空格分隔；如需 IP 直连请追加服务器 IP"
+
+access:
+  subdomain: cloud
+  port: 8888
+  protocol: http
+  proxy_extra:
+    proxy_buffering: "off"
+    client_max_body_size: "0"
+
+healthcheck:
+  url: "http://127.0.0.1:{NEXTCLOUD_PORT}/status.php"
+  interval: 30s
+  timeout: 10s
+  retries: 3
+
+resources:
+  memory_limit: "1g"
+  cpu_limit: "2.0"
+
+docs:
+  usage: |
+    ## Nextcloud 私有云盘
+
+    开源私有云盘解决方案，支持多端文件自动同步、在线预览、外链分享、WebDAV 挂载和手机相册备份。
+
+    ### 首次使用
+    1. 通过 `https://cloud.你的域名:8443` 访问
+    2. 使用安装时填写的管理员账号密码登录
+    3. 在「设置 → 安全管理」中修改密码并配置邮件通知（可选）
+
+    ### 主要功能
+    - **多端同步**：Windows / macOS / Linux / iOS / Android 客户端自动同步文件
+    - **在线预览**：图片、视频、音视频、PDF、Office 文档直接在浏览器中查看
+    - **外链分享**：生成带有效期和密码的分享链接
+    - **WebDAV**：地址 `https://cloud.你的域名:8443/remote.php/dav`，可挂载为本地磁盘
+    - **相册备份**：手机端开启「自动上传」，照片视频自动备份
+    - **应用生态**：内置日历、联系人、笔记、OnlyOffice 在线编辑等应用
+
+    ### 数据存储
+    - 程序与配置：`data/nextcloud/html/`
+    - 用户文件：`data/nextcloud/data/`（与程序分离，便于单独备份或迁移）
+    - 数据库：SQLite（自用场景足够，数据位于配置目录内）
+
+    ### Cloudflare Tunnel 访问
+    如使用 Cloudflare Tunnel 发布本服务，在隧道路由中添加：
+    `cloud.你的域名 → http://127.0.0.1:8888`
+
+    ### 上传大文件
+    已默认放开 Nginx 反代上传限制（`client_max_body_size 0`）与 PHP 上传限制（10G），
+    单文件 10G 以内可直接上传；如需更大请调整 compose 中 `PHP_UPLOAD_LIMIT`。
+
+  faq:
+    - q: "忘记管理员密码怎么办？"
+      a: "执行 `docker exec -it easyserver-nextcloud php occ user:resetpassword admin` 重置"
+    - q: "提示 Untrusted domain（不受信任的域名）？"
+      a: "首次安装后如需更换访问域名，编辑 `data/nextcloud/html/config/config.php` 的 trusted_domains 数组后重启容器"
+    - q: "上传大文件失败？"
+      a: "检查 Nginx 反代（已默认不限）与容器内 PHP_UPLOAD_LIMIT（默认 10G），并确认客户端与服务器网络稳定"
+    - q: "如何备份数据？"
+      a: "进入维护模式 `docker exec -it easyserver-nextcloud php occ maintenance:mode --on` 后备份 `data/nextcloud/` 目录，备份完成再关闭维护模式；该目录已纳入 EasyServer 备份模块"
+    - q: "如何升级 Nextcloud？"
+      a: "执行 `docker compose -f modules/nextcloud/docker-compose.yml pull && docker compose -f modules/nextcloud/docker-compose.yml up -d`，升级前务必先备份数据"
+    - q: "IP 直连访问异常？"
+      a: "hybrid/IP 直连模式下，需在安装配置的「访问域名」中追加服务器 IP；如反向代理链路变化请重启容器使 trusted_proxies 生效"
+
+  links:
+    - label: "Nextcloud 官方网站"
+      url: "https://nextcloud.com/"
+    - label: "Nextcloud 官方文档"
+      url: "https://docs.nextcloud.com/"
+    - label: "Nextcloud Docker 镜像"
+      url: "https://hub.docker.com/_/nextcloud"

@@ -30,9 +30,10 @@ categories:
 
   - id: files
     name: "文件管理"
-    description: "文件浏览和管理工具"
+    description: "文件浏览、云盘与同步工具"
     modules:
       - filebrowser
+      - nextcloud
 
   - id: network
     name: "网络穿透"
