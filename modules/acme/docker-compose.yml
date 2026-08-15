@@ -7,13 +7,16 @@ services:
     container_name: easyserver-acme
     command: daemon
     volumes:
-      - ${DATA_DIR}/acme/data:/acme.sh
+      # 数据卷由宿主 daemon 解析，必须使用 PROJECT_ROOT 绝对路径（容器内 DATA_DIR 会被插值为 /app/data）
+      - ${PROJECT_ROOT:-/home/lf/easyserver}/data/acme/data:/acme.sh
       - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/acme-challenge:/acme-challenge
       - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/ssl:/etc/nginx/ssl
     network_mode: host
     # 各 DNS 提供商凭证由后端写入此文件（含自定义提供商变量）
+    # 使用相对路径：env_file 由 compose CLI 本地读取（相对 compose 文件目录），
+    # 确保从宿主机或 core 容器内执行都能找到该文件
     env_file:
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/acme/dns-credentials.env
+      - ./dns-credentials.env
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped

@@ -10,9 +10,12 @@ from ..core.module_loader import ModuleLoader
 from ..core.alidns_api import AliyunDNSClient, AliyunDNSAPIError
 from ..core.cloudflare_api import CloudflareClient, CloudflareAPIError
 from ..core.ip_utils import get_public_ips
+import logging
 import os
 
 router = APIRouter(prefix="/api/dns", tags=["dns"])
+
+logger = logging.getLogger("easyserver.dns")
 
 PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
 
@@ -67,8 +70,29 @@ def _get_cloudflare_token(cm: ConfigManager) -> str:
     return env.get("CF_API_TOKEN", "")
 
 
-def _get_target_subdomains(cm: ConfigManager, ml: ModuleLoader) -> list:
-    """收集需要解析的子域名列表（已安装模块的 access.subdomain + 管理面板）"""
+def _get_tunnel_published_subdomains(cm: ConfigManager) -> set:
+    """提取已通过 Cloudflare Tunnel 发布的子域名集合（cloudflare_tunnel.routes 为路由唯一数据源）"""
+    cfg = cm.load_config()
+    domain = cfg.get("domain", "")
+    tunnel_cfg = cfg.get("cloudflare_tunnel", {}) or {}
+    routes = tunnel_cfg.get("routes", []) or []
+    suffix = f".{domain}" if domain else ""
+    subs = set()
+    for r in routes:
+        hostname = (r.get("hostname") or "").strip()
+        if not hostname:
+            continue
+        if suffix and hostname.endswith(suffix):
+            subs.add(hostname[: -len(suffix)])
+        else:
+            subs.add(hostname)
+    return subs
+
+
+def _get_target_subdomains(cm: ConfigManager, ml: ModuleLoader, exclude_tunnel_published: bool = False) -> list:
+    """收集需要解析的子域名列表（已安装模块的 access.subdomain + 管理面板）
+    exclude_tunnel_published=True 时排除已通过 Tunnel 发布的子域名（避免覆盖其 CNAME 记录）"""
+    excluded = _get_tunnel_published_subdomains(cm) if exclude_tunnel_published else set()
     subdomains = []
     installed_ids = cm.get_installed_modules()
     for mid in installed_ids:
@@ -79,11 +103,12 @@ def _get_target_subdomains(cm: ConfigManager, ml: ModuleLoader) -> list:
         if not access or access.get("is_proxy"):
             continue
         sub = access.get("subdomain", "")
-        if sub:
+        if sub and sub not in excluded:
             subdomains.append({"subdomain": sub, "module": mid})
     # 管理面板
     panel_sub = cm.get_config_value("panel_subdomain", "panel") or "panel"
-    subdomains.append({"subdomain": panel_sub, "module": "panel"})
+    if panel_sub not in excluded:
+        subdomains.append({"subdomain": panel_sub, "module": "panel"})
     # 去重（保留 module 名）
     seen = set()
     result = []
@@ -212,10 +237,39 @@ async def sync_dns():
     targets = _build_targets(ips)
     results = []
 
+    # hybrid 模式下，跳过已 Tunnel 发布的服务，避免覆盖其 CNAME 记录
+    # （domain 模式不在此排除：遗留 CNAME 冲突由下方同名 CNAME 冲突保护兜底，以 skipped 形式可见）
+    access_mode = cfg.get("access_mode", "domain")
+    tunnel_cfg = cfg.get("cloudflare_tunnel", {}) or {}
+    tunnel_routes = tunnel_cfg.get("routes", []) or []
+    exclude_tunnel = (
+        access_mode == "hybrid"
+        and bool(tunnel_cfg.get("tunnel_id"))
+        and bool(tunnel_routes)
+    )
+    subdomains = _get_target_subdomains(cm, ml, exclude_tunnel_published=exclude_tunnel)
+
     if provider == "aliyun":
         client = AliyunDNSClient(creds["key"], creds["secret"])
-        for item in _get_target_subdomains(cm, ml):
+        for item in subdomains:
             rr = item["subdomain"]
+            # 冲突保护（与 Cloudflare provider 对齐）：存在同名 CNAME（Tunnel 发布）时跳过 A/AAAA 同步
+            try:
+                cname_conflict = client.find_record(domain, rr, "CNAME")
+            except AliyunDNSAPIError:
+                cname_conflict = None
+            if cname_conflict:
+                logger.info("DNS 同步跳过 %s.%s：存在同名 CNAME 记录（Tunnel 发布），避免冲突", rr, domain)
+                for rec_type, value in targets:
+                    results.append({
+                        "subdomain": rr,
+                        "type": rec_type,
+                        "value": value,
+                        "action": "skipped",
+                        "success": True,
+                        "reason": f"存在同名 CNAME 记录（{cname_conflict.get('Value')}），已跳过",
+                    })
+                continue
             for rec_type, value in targets:
                 status = {"subdomain": rr, "type": rec_type, "value": value}
                 try:
@@ -244,7 +298,7 @@ async def sync_dns():
             raise HTTPException(status_code=400, detail="域名未托管到 Cloudflare，请先在 Cloudflare 添加站点并修改 NS 记录")
         zone_id = zone["id"]
 
-        for item in _get_target_subdomains(cm, ml):
+        for item in subdomains:
             hostname = f"{item['subdomain']}.{domain}"
             for rec_type, value in targets:
                 status = {"subdomain": item["subdomain"], "type": rec_type, "value": value}
@@ -282,6 +336,7 @@ async def sync_dns():
     created = len([r for r in results if r.get("action") == "created"])
     updated = len([r for r in results if r.get("action") == "updated"])
     unchanged = len([r for r in results if r.get("action") == "unchanged"])
+    skipped = len([r for r in results if r.get("action") == "skipped"])
     failed = len([r for r in results if not r.get("success")])
 
     return {
@@ -290,6 +345,6 @@ async def sync_dns():
         "domain": domain,
         "public_ipv4": ips["ipv4"],
         "public_ipv6": ips["ipv6"],
-        "summary": {"created": created, "updated": updated, "unchanged": unchanged, "failed": failed},
+        "summary": {"created": created, "updated": updated, "unchanged": unchanged, "skipped": skipped, "failed": failed},
         "results": results,
     }

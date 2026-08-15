@@ -9,12 +9,16 @@ from ..core.config_manager import ConfigManager
 from ..core.docker_manager import DockerManager
 from ..core.module_loader import ModuleLoader
 from ..core.dns_providers import DNS_PROVIDERS, get_provider, is_mask_value, MASK_PREFIX
+import asyncio
+import logging
 import os
 import subprocess
 from pathlib import Path
 from datetime import datetime
 
 router = APIRouter(prefix="/api/config", tags=["config"])
+
+logger = logging.getLogger("easyserver.config")
 
 PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
 
@@ -356,6 +360,27 @@ async def login(request: LoginRequest):
 
 # ===== 网络配置接口 =====
 
+# 后台任务引用集，防止异步任务被 GC 提前回收
+_background_tasks = set()
+
+
+def _trigger_dns_sync_background():
+    """异步触发一次 DNS 同步（不阻塞 HTTP 响应，异常不影响主流程）"""
+    from .dns import sync_dns
+
+    async def _run():
+        try:
+            result = await sync_dns()
+            summary = result.get("summary", {}) if isinstance(result, dict) else {}
+            logger.info("hybrid 模式后台 DNS 同步完成: %s", summary)
+        except Exception as e:
+            logger.warning("hybrid 模式后台 DNS 同步失败（不影响网络配置主流程）: %s", e)
+
+    task = asyncio.create_task(_run())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 class NetworkConfigRequest(BaseModel):
     access_mode: str  # "domain" | "cloudflare_tunnel" | "ipv6_direct"
     dns_provider: Optional[str] = None
@@ -437,6 +462,12 @@ async def configure_network(request: NetworkConfigRequest):
             provider = request.dns_provider or cm.get_config_value("dns_provider", "aliyun")
             _save_dns_credentials(cm, provider, request.dns_credentials)
 
+        # 智能 DNS 同步：模块启停完成后异步触发一次，不阻塞 HTTP 响应（自动跳过已 Tunnel 发布的服务）
+        try:
+            _trigger_dns_sync_background()
+        except Exception as e:
+            logger.warning("后台 DNS 同步任务调度失败: %s", e)
+
     elif request.access_mode == "cloudflare_tunnel":
         # Cloudflare Tunnel：启动 cloudflare-tunnel，停止 nginx+acme
         if request.cf_tunnel_token:
@@ -485,12 +516,14 @@ async def configure_network(request: NetworkConfigRequest):
     # 3. 生成 Nginx 配置（domain / hybrid 模式）
     if request.access_mode in ("domain", "hybrid"):
         try:
+            from ..core.nginx_generator import NginxGenerator
             ng = NginxGenerator(PROJECT_ROOT)
             installed_modules = [ml.get_module_by_id(m) for m in cm.get_installed_modules() if ml.get_module_by_id(m)]
             ng.generate_all(cm.load_config(), installed_modules)
-            ng.reload_nginx()
-        except Exception:
-            pass
+            if not ng.reload_nginx():
+                logger.warning("Nginx 配置已重新生成，但热加载失败（nginx -s reload 返回非零），请检查 Nginx 容器状态")
+        except Exception as e:
+            logger.warning("Nginx 配置重新生成失败（不影响网络模式切换主流程）: %s", e)
 
     # 4. 标记网络配置完成
     cm.mark_network_configured()

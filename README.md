@@ -1,5 +1,7 @@
 # EasyServer
 
+> 当前版本：v1.1.0
+
 个人服务器一站式部署方案 —— 模块化、可视化管理、一键安装。
 
 ## 特性
@@ -7,7 +9,7 @@
 - **模块化架构**：每个服务独立 Docker Compose 文件，独立启停，互不影响
 - **Web 管理面板**：基于 Vue 3 + Element Plus 的可视化界面，服务状态一目了然
 - **安装向导**：首次使用完成域名、密码等基础配置，不自动安装任何服务；配置网络访问时自动安装对应网络模块，其余服务从应用商店按需安装
-- **双访问模式**：支持域名反代 (SSL) 和 IPv6 直连，可自由切换
+- **智能混合路由**：支持域名反代 (SSL)、IPv6 直连与 Cloudflare Tunnel 中转，可按服务粒度自由选择路由方式，智能推荐一键配置、无缝切换，详见 [网络配置指南](docs/network-config.md)
 - **应用商店**：按需安装服务（后台任务执行，实时进度与失败诊断），支持依赖自动检查，密码类字段可一键随机生成
 - **易于扩展**：新增服务只需 4 个文件，详见 [模块开发指南](docs/MODULE_DEV_GUIDE.md)
 
@@ -57,6 +59,7 @@ docker compose up -d
 | ddns-go | 网络 | - | 动态域名解析 |
 | acme | 网络 | - | SSL 证书自动续签 |
 | cloudflare-tunnel | 网络 | - | Cloudflare 隧道 |
+| nextcloud | 文件 | 8888 | Nextcloud 私有云盘 |
 | backup | 基础设施 | - | 数据备份（restic） |
 | frigate | 媒体 | 8971 | AI 视频监控（NVR） |
 
@@ -82,7 +85,8 @@ easyserver/
 ├── data/                       # 数据目录
 └── docs/
     ├── ARCHITECTURE.md         # 架构设计
-    └── MODULE_DEV_GUIDE.md     # 模块开发指南
+    ├── MODULE_DEV_GUIDE.md     # 模块开发指南
+    └── network-config.md       # 网络配置指南（含混合路由教程）
 ```
 
 ## CLI 管理
@@ -107,8 +111,13 @@ easyserver/
 服务端口直接暴露在公网，适合无域名的场景。
 - `http://[240e:xxx:xxx]:8081` → FileBrowser
 
-### 混合模式
-同时支持以上两种方式。
+### 智能混合路由模式 (推荐)
+域名反代与 Tunnel 中转并存，按服务粒度自由选择路由方式：
+- **域名反代**：DNS AAAA → 服务器 IPv6 → Nginx SSL，适合 IPv6 出口稳定的服务
+- **Tunnel 中转**：DNS CNAME → Cloudflare 边缘 → Tunnel，免端口、不依赖公网出口
+
+支持逐服务切换路由方式、智能推荐一键配置、DNS 记录自动同步与冲突保护。
+详见 [网络配置指南](docs/network-config.md)。
 
 ## 新增模块
 

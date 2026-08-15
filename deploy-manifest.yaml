@@ -1,7 +1,7 @@
 # EasyServer 部署清单
 # 此文件描述部署所需的全部参数和环境要求，供 AI 工具解析执行
 
-version: "1.0"
+version: "1.1"
 name: "EasyServer"
 description: "个人服务器一站式模块化部署方案"
 
