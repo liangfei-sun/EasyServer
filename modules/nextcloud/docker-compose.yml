@@ -1,5 +1,6 @@
 # EasyServer - Nextcloud 私有云盘模块
-# 单容器部署：官方镜像 + SQLite（自用场景足够，无需独立数据库）
+# 单容器部署：官方镜像扩展（含 ffmpeg 视频预览支持）+ SQLite（自用场景足够，无需独立数据库）
+# 注意：本模块使用 build 构建（见 Dockerfile），CLI 安装时 compose pull 会自动跳过，up 时自动构建
 
 networks:
   nextcloud-internal:
@@ -9,7 +10,7 @@ networks:
 
 services:
   nextcloud:
-    image: nextcloud:stable
+    build: .
     container_name: easyserver-nextcloud
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${NEXTCLOUD_PORT:-8888}:80"

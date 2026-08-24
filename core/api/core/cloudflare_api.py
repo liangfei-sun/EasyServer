@@ -90,7 +90,8 @@ class CloudflareClient:
     def get_tunnel_token(self, account_id: str, tunnel_id: str) -> str:
         """获取隧道的运行时 Token"""
         result = self._request("GET", f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/token")
-        return (result or {}).get("token", "")
+        # Cloudflare API 直接返回 token 字符串，而非包含 token 字段的对象
+        return result if isinstance(result, str) else (result or {}).get("token", "")
 
     def get_tunnel_connections(self, account_id: str, tunnel_id: str) -> list:
         """获取隧道连接列表（非空表示已连接）"""

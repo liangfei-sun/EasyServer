@@ -139,6 +139,99 @@ class ConfigManager:
             installed.remove(module_id)
             self.set_config_value("installed_modules", installed)
 
+    # ===== 多域名管理方法 =====
+
+    def get_domains(self) -> list:
+        """返回域名列表。
+        若 domains 字段存在则直接返回；
+        否则从 domain + dns_provider 构造单元素列表（向后兼容）。
+        """
+        domains = self.get_config_value("domains")
+        if domains and isinstance(domains, list) and len(domains) > 0:
+            return domains
+        # 向后兼容：从 domain + dns_provider 构造
+        domain = self.get_config_value("domain", "")
+        if not domain:
+            return []
+        dns_provider = self.get_config_value("dns_provider", "aliyun")
+        return [{
+            "domain": domain,
+            "dns_provider": dns_provider,
+            "purpose": "nginx",
+            "status": "active"
+        }]
+
+    def get_primary_domain(self) -> str:
+        """返回主域名。优先读 domains[0].domain，回退读 domain 字段。"""
+        domains = self.get_domains()
+        if domains:
+            return domains[0].get("domain", "")
+        return self.get_config_value("domain", "")
+
+    def get_domain_config(self, domain: str) -> dict:
+        """获取指定域名的配置项（dns_provider, purpose, status 等）。
+        未找到返回空 dict。
+        """
+        domains = self.get_domains()
+        for d in domains:
+            if d.get("domain") == domain:
+                return d
+        return {}
+
+    def add_domain(self, domain_cfg: dict) -> bool:
+        """添加域名到 domains 列表。
+        domain_cfg 格式: {"domain": "xxx", "dns_provider": "aliyun", "purpose": "nginx"}
+        自动设置 status: "active"。
+        如果 domain 已存在则更新。
+        同步更新 domain 字段为 domains[0].domain。
+        """
+        domain_name = domain_cfg.get("domain", "").strip()
+        if not domain_name:
+            return False
+
+        domains = self.get_domains()
+        # 确保每个条目都有 status
+        domain_cfg = dict(domain_cfg)
+        domain_cfg.setdefault("status", "active")
+
+        # 查找是否已存在
+        found = False
+        for i, d in enumerate(domains):
+            if d.get("domain") == domain_name:
+                domains[i] = {**domains[i], **domain_cfg}  # 保留原有字段，覆盖传入字段
+                found = True
+                break
+        if not found:
+            domains.append(domain_cfg)
+
+        self.set_config_value("domains", domains)
+        # 同步 domain 字段为主域名
+        self.set_config_value("domain", domains[0].get("domain", ""))
+        return True
+
+    def remove_domain(self, domain: str) -> bool:
+        """从 domains 列表移除域名。不允许移除主域名（domains[0]）。"""
+        domains = self.get_domains()
+        if not domains:
+            return False
+        # 不允许移除主域名
+        if domains[0].get("domain") == domain:
+            return False
+        new_domains = [d for d in domains if d.get("domain") != domain]
+        if len(new_domains) == len(domains):
+            return False  # 未找到
+        self.set_config_value("domains", new_domains)
+        return True
+
+    def update_domain_status(self, domain: str, status: str):
+        """更新指定域名的状态（active/inactive/error）。"""
+        domains = self.get_domains()
+        for d in domains:
+            if d.get("domain") == domain:
+                d["status"] = status
+                self.set_config_value("domains", domains)
+                return
+
     @staticmethod
     def generate_password(length: int = 32) -> str:
         return secrets.token_hex(length // 2)

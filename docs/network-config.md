@@ -3,7 +3,7 @@
 > **适用版本**：EasyServer 0.2.x（含智能混合路由功能）  
 > **更新时间**：2026-08  
 > **适用范围**：所有 EasyServer 用户  
-> **阅读建议**：新用户请从「2. 五种访问方式与选择建议」开始；已配置好的用户可直接跳转「3. 智能混合路由使用指南」或「6. 常见问题 FAQ」。
+> **阅读建议**：新用户请从「2. 五种访问方式与选择建议」开始；已配置好的用户可直接跳转「3. 智能混合路由使用指南」或「8. 常见问题 FAQ」。
 
 ---
 
@@ -14,7 +14,9 @@
 - [3. 智能混合路由使用指南（新功能）](#3-智能混合路由使用指南新功能)
 - [4. 域名反代模式配置要点](#4-域名反代模式配置要点)
 - [5. 其他模式配置要点](#5-其他模式配置要点)
-- [6. 常见问题 FAQ](#6-常见问题-faq)
+- [6. 多域名配置](#6-多域名配置)
+- [7. 常见问题排查](#7-常见问题排查)
+- [8. 常见问题 FAQ](#8-常见问题-faq)
 - [附录 A：DNS 凭证创建与手动配置](#附录-adns-凭证创建与手动配置)
 - [附录 B：SSL 证书与端口说明](#附录-bssl-证书与端口说明)
 - [附录 C：术语表](#附录-c术语表)
@@ -188,7 +190,7 @@ Nginx 在服务器上监听 HTTPS 端口（默认 8443），根据域名将请�
 
 ### 4.5 SSL 证书自动申请
 
-填写 DNS 凭证后，ACME 模块自动通过 DNS API 验证域名、申请 Let's Encrypt 证书，并在到期前 60 天自动续签。证书状态可在「域名反代配置 → SSL 证书」查看（有效/到期时间）。申请失败排查见 [6.8 节](#68-ssl-证书申请失败)。
+填写 DNS 凭证后，ACME 模块自动通过 DNS API 验证域名、申请 Let's Encrypt 证书，并在到期前 60 天自动续签。证书状态可在「域名反代配置 → SSL 证书」查看（有效/到期时间）。申请失败排查见 [8.8 节](#88-ssl-证书申请失败)。
 
 ### 4.6 Nginx 配置自动维护
 
@@ -246,13 +248,122 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 
 ---
 
-## 6. 常见问题 FAQ
+## 6. 多域名配置
 
-### 6.1 切换访问方式时页面一直转圈，是不是卡死了？
+EasyServer 支持同时配置多个域名，每个域名可绑定不同的 DNS 提供商和用途。典型场景：
+- **lfblog.top**（阿里云 DNS）→ 用于域名反代（Nginx）
+- **mytunnel.dpdns.org**（Cloudflare DNS）→ 用于 Tunnel 中转
+
+### 为什么需要多域名？
+
+Cloudflare Tunnel 要求域名的权威 DNS 必须托管在 Cloudflare，否则 `cfargotunnel.com` 的 CNAME 记录无法正常工作。如果您的主域名（如 lfblog.top）托管在阿里云 DNS，则需要额外注册一个免费域名并迁移到 Cloudflare，专门用于 Tunnel 服务。
+
+> **重要提示：免费域名后缀选择**
+> 
+> 不是所有免费域名后缀都支持自定义 NS 记录迁移到 Cloudflare。根据实际测试：
+> 
+> | 后缀 | 支持 Cloudflare NS | 说明 |
+> |------|-------------------|------|
+> | **de5.net** | ✅ 支持 | DnShe 平台推荐后缀，可正常迁移 NS 到 Cloudflare |
+> | cc.cd | ❌ 不支持 | 无法自定义 NS 记录，不能用于 Cloudflare Tunnel |
+> | us.ci | ❌ 不支持 | 暂不支持 Cloudflare NS 切换 |
+> | ccwu.cc | ❌ 不支持 | 暂不支持 Cloudflare NS 切换 |
+> 
+> **结论**：使用 DnShe 平台注册免费域名时，**必须选择 de5.net 后缀**才能用于 Cloudflare Tunnel。其他后缀虽然可以注册，但无法迁移 NS 到 Cloudflare，Tunnel 服务将无法工作。
+
+### 如何注册免费域名？
+
+推荐使用以下免费域名服务：
+
+| 服务商 | 域名后缀 | 特点 |
+|--------|----------|------|
+| DigitalPlat | .dpdns.org / .qzz.io | 即时发放，完全免费，支持 NS 迁移 |
+| EU.org | .eu.org | 免费，但审核较慢（可能需数天） |
+| ClouDNS | 免费 Zone | 提供免费 DNS 托管，可搭配自定义域名 |
+
+**以 DigitalPlat 为例**：
+1. 访问 https://nic.dpdns.org/ 注册账号
+2. 申请一个免费域名（如 `mytunnel.dpdns.org`）
+3. 获取域名后，在 Cloudflare Dashboard 添加该域名（选择 Free 计划）
+4. 记录 Cloudflare 分配的 NS 地址（如 `alice.ns.cloudflare.com`）
+5. 在 DigitalPlat 管理面板中将 NS 记录改为 Cloudflare 的 NS
+6. 等待 NS 生效（通常几分钟到 24 小时）
+
+### 如何在 EasyServer 中添加 Tunnel 域名？
+
+1. 打开 EasyServer 管理面板 → 网络配置
+2. 在「域名管理」卡片中点击「添加域名」
+3. 填写：
+   - **域名**：您注册的免费域名（如 `mytunnel.dpdns.org`）
+   - **DNS 提供商**：选择 Cloudflare
+   - **用途**：选择「Tunnel 中转」
+4. 点击「添加」，系统会自动验证 DNS 连通性
+5. 验证通过后，在 Tunnel 服务发布时选择该域名即可
+
+### 服务发布时如何选择域名？
+
+- **单域名**：自动使用唯一域名，无需手动选择
+- **多域名**：在 Tunnel 中转服务卡片顶部会出现「目标域名」下拉选择器，选择要发布到的域名即可
+
+### 配置示例
+
+```yaml
+# config.yaml 多域名配置示例
+domain: lfblog.top              # 主域名
+
+domains:
+  - domain: lfblog.top
+    dns_provider: aliyun
+    purpose: nginx               # 域名反代
+    status: active
+  - domain: mytunnel.dpdns.org
+    dns_provider: cloudflare
+    purpose: tunnel              # Tunnel 中转
+    status: active
+```
+
+---
+
+## 7. 常见问题排查
+
+### Tunnel 服务外网无法访问
+
+**可能原因**：
+1. 域名 DNS 未托管在 Cloudflare（cfargotunnel.com CNAME 仅对 Cloudflare 权威 DNS 有效）
+2. Tunnel 容器未运行或连接中断
+3. DNS CNAME 记录未正确创建
+
+**排查步骤**：
+1. 在「域名管理」中点击「验证」，查看各项检查结果
+2. 检查 Tunnel 容器状态：`docker ps | grep tunnel`
+3. 查看 Tunnel 日志：`docker logs easyserver-cloudflare-tunnel --tail=30`
+4. 确认 DNS 记录：`dig @8.8.8.8 your-subdomain.your-domain.com CNAME +short`
+
+### 域名验证显示「DNS 提供商连接失败」
+
+**阿里云**：
+- 确认 AccessKey 已正确配置（在设置 → DNS 凭证中检查）
+- 确认 AccessKey 拥有 DNS 管理权限
+
+**Cloudflare**：
+- 确认 API Token 已配置（注意：`eyJ` 开头的是 Tunnel Token，不是 API Token）
+- API Token 应以 `cfut_` 开头，需要 `Account:Cloudflare Tunnel:Edit` + `Zone:DNS:Edit` 权限
+
+### SSL 证书未找到或已过期
+
+- 确认 ACME 模块已安装并运行
+- 检查证书申请日志：`docker logs easyserver-acme`
+- 手动重新申请：在 ACME 模块设置中点击「重新申请证书」
+
+---
+
+## 8. 常见问题 FAQ
+
+### 8.1 切换访问方式时页面一直转圈，是不是卡死了？
 
 **正常现象**。首次切换到某种方式时，系统会自动安装并启动相关模块（如 Nginx、ACME、DDNS、Cloudflare Tunnel），页面会显示「正在切换访问方式，首次切换需安装并启动相关模块，可能需要几分钟」的全屏提示。整个过程可能持续数分钟，**请勿关闭或刷新页面**，等待提示「已切换到 xxx」即为成功。
 
-### 6.2 为什么有的服务访问地址免端口，有的带端口号？
+### 8.2 为什么有的服务访问地址免端口，有的带端口号？
 
 取决于该服务的路由方式：
 
@@ -261,11 +372,11 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 
 「Tunnel 中转服务」卡片的「访问地址」列会自动给出正确格式，直接复制使用即可，无需自己拼。
 
-### 6.3 DNS 同步结果出现「跳过」怎么办？
+### 8.3 DNS 同步结果出现「跳过」怎么办？
 
 **无需处理**。「跳过」表示该子域名已存在 CNAME 记录（对应服务已通过 Tunnel 中转发布），同一子域名无法同时存在 CNAME 与 A/AAAA 记录，系统主动跳过以保护 Tunnel 路由，属于正常的冲突保护机制。若你确实想让该服务改回域名反代，请先在「Tunnel 中转服务」卡片将其「切换为域名反代」，再重新点击「立即同步 DNS 记录」。
 
-### 6.4 从 Tunnel 中转移切回域名反代后，服务短暂无法访问？
+### 8.4 从 Tunnel 中转移切回域名反代后，服务短暂无法访问？
 
 **属于 DNS 生效延迟**。切换路由方式后，DNS 记录的变更需要时间在全球生效（通常几分钟，最长约 10 分钟）。处理建议：
 
@@ -273,7 +384,7 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 2. 可手动点击「**立即同步 DNS 记录**」，确认该子域名的 A/AAAA 记录已补建（同步结果中不应再出现「跳过」）
 3. 仍不行时，用手机的移动网络访问试试（排除本地 DNS 缓存），或在浏览器无痕窗口打开
 
-### 6.5 「Tunnel 中转服务」卡片显示「尚未接入 Cloudflare Tunnel」？
+### 8.5 「Tunnel 中转服务」卡片显示「尚未接入 Cloudflare Tunnel」？
 
 这说明你当前是域名反代模式且还没有接入 Tunnel，所有服务都通过域名反代访问。如果希望使用混合路由：
 
@@ -283,13 +394,13 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 
 如果你不需要 Tunnel，忽略该卡片即可，不影响域名反代的正常使用。
 
-### 6.6 同步 DNS 提示「存在冲突的 CNAME 记录」
+### 8.6 同步 DNS 提示「存在冲突的 CNAME 记录」
 
 **原因**：该子域名此前通过 Tunnel 发布过，已有 CNAME 指向隧道，同一域名无法同时存在 CNAME 与 A 记录。
 
 **解决**：在「Tunnel 中转服务」或「服务发布 → 已发布」中将对应服务切换回域名反代（取消发布），然后重新点击「立即同步 DNS 记录」。
 
-### 6.7 提示 Token 无效或 Invalid request headers
+### 8.7 提示 Token 无效或 Invalid request headers
 
 **原因**：混淆了两种 Cloudflare Token：
 
@@ -300,15 +411,15 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 
 **解决**：在 [API Tokens 页面](https://dash.cloudflare.com/profile/api-tokens) 重新创建 **API Token**（见[附录 A](#附录-adns-凭证创建与手动配置)），粘贴到网络配置中。
 
-### 6.8 SSL 证书申请失败
+### 8.8 SSL 证书申请失败
 
 1. **DNS 凭证错误**：确认 AccessKey/Token 有 DNS 写入权限（阿里云需 `AliyunDNSFullAccess`）
 2. **域名未解析**：证书验证依赖 DNS，先完成解析配置
-3. **凭证混淆**：确认填的是 API Token 而非 Tunnel Token（见 [6.7](#67-提示-token-无效或-invalid-request-headers)）
+3. **凭证混淆**：确认填的是 API Token 而非 Tunnel Token（见 [8.7](#87-提示-token-无效或-invalid-request-headers)）
 4. **申请频率限制**：Let's Encrypt 每周每域名限 5 次，失败后等待 24 小时重试
 5. **查看日志**：到「服务管理 → ACME → 日志」查看详细错误
 
-### 6.9 域名已添加解析但仍无法访问
+### 8.9 域名已添加解析但仍无法访问
 
 按顺序排查：
 
@@ -318,7 +429,7 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 4. **访问地址错误**：域名反代需带端口号（您配置的 HTTPS 端口，默认 8443）；Tunnel 中转无需端口
 5. **本地网络缓存**：换手机流量访问试试（排除本地 DNS 缓存）
 
-### 6.10 修改域名后服务无法访问
+### 8.10 修改域名后服务无法访问
 
 修改主域名**不会自动更新**已有配置（设计如此，避免误操作影响线上服务）。修改后需手动处理：
 
@@ -326,7 +437,7 @@ Nginx 反代配置由系统自动生成：安装/卸载模块时自动增删对�
 2. **域名反代**：点击「重新生成 Nginx 配置」，并重新执行「立即同步 DNS 记录」
 3. **SSL 证书**：新域名需要重新签发（ACME 自动检测）
 
-### 6.11 443 端口被运营商/云厂商封锁
+### 8.11 443 端口被运营商/云厂商封锁
 
 国内云服务器未备案时通常封锁 443/80 端口，可选方案：
 

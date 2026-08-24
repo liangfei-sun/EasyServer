@@ -80,6 +80,33 @@ def _get_dns_provider(cm):
     return cm.get_config_value("dns_provider", None) or None
 
 
+def _get_cf_dns_token(cm) -> str:
+    """获取 Cloudflare DNS 操作专用 token（dns_credentials.cloudflare.token）。
+    缺失时直接抛出 HTTPException，不再静默回退到 tunnel token。
+    """
+    dns_creds = cm.get_config_value("dns_credentials", {})
+    if isinstance(dns_creds, dict):
+        cf_creds = dns_creds.get("cloudflare", {})
+        if isinstance(cf_creds, dict):
+            token = cf_creds.get("token")
+            if token:
+                return token
+    raise HTTPException(
+        status_code=400,
+        detail="尚未配置 Cloudflare DNS Token，请在设置 → 网络配置中填写 dns_credentials.cloudflare.token 后重试",
+    )
+
+
+def _resolve_domain(cm, domain: Optional[str] = None) -> str:
+    """解析目标域名：指定则用指定值，否则返回主域名"""
+    if domain:
+        # 验证域名已在配置中
+        if not cm.get_domain_config(domain):
+            raise HTTPException(status_code=400, detail=f"域名 {domain} 未在配置中添加")
+        return domain
+    return cm.get_primary_domain()
+
+
 async def _ensure_tunnel_module_running(cm, dm) -> bool:
     """确保 cloudflare-tunnel 模块已安装并运行，未运行时自动安装启动（幂等的 docker compose up -d）
     返回是否本次触发了启动
@@ -114,6 +141,7 @@ class PublishRequest(BaseModel):
     subdomain: str
     port: int
     protocol: str = "http"
+    domain: Optional[str] = None  # 目标域名，不传则使用主域名
 
 
 class UnpublishRequest(BaseModel):
@@ -310,6 +338,15 @@ async def status():
         except Exception as e:
             error = str(e)
 
+    # 获取所有已配置域名，用于多域名 published 判断
+    all_domains = cm.get_domains()
+    all_domain_names = [d.get("domain", "") for d in all_domains if d.get("domain")]
+    if not all_domain_names and domain:
+        all_domain_names = [domain]
+
+    # 构建 tunnel routes 的 hostname 集合（用于快速查找）
+    route_hostnames = set(r["hostname"] for r in routes)
+
     # 可发布服务列表（已安装且配置了子域名/端口）
     services = []
     ml = _get_module_loader()
@@ -335,27 +372,93 @@ async def status():
                     except (ValueError, TypeError):
                         pass
                 break
-        hostname = f"{subdomain}.{domain}" if domain else ""
+        # 构建该服务在所有域名上的 hostname 列表
+        all_hostnames = [f"{subdomain}.{d_name}" for d_name in all_domain_names if d_name]
+        # 检查该服务的 subdomain 是否在任何域名的 tunnel 路由中
+        published = False
+        service_hostname = ""
+        for candidate in all_hostnames:
+            if candidate in route_hostnames:
+                published = True
+                service_hostname = candidate
+                break
+        # 如果未发布，默认使用主域名构建展示用 hostname
+        if not service_hostname:
+            service_hostname = f"{subdomain}.{domain}" if domain else ""
         services.append({
             "module": mid,
             "name": metadata.get("name", mid),
             "subdomain": subdomain,
             "port": port,
-            "hostname": hostname,
-            "published": hostname in [r["hostname"] for r in routes],
+            "hostname": service_hostname,
+            "all_hostnames": all_hostnames,
+            "published": published,
         })
 
     # 管理面板（非服务模块，不在模块列表中，单独加入）
     panel_subdomain = cm.get_config_value("panel_subdomain", "panel") or "panel"
-    panel_hostname = f"{panel_subdomain}.{domain}" if domain else ""
+    panel_all_hostnames = [f"{panel_subdomain}.{d_name}" for d_name in all_domain_names if d_name]
+    panel_published = False
+    panel_hostname = ""
+    for candidate in panel_all_hostnames:
+        if candidate in route_hostnames:
+            panel_published = True
+            panel_hostname = candidate
+            break
+    if not panel_hostname:
+        panel_hostname = f"{panel_subdomain}.{domain}" if domain else ""
     services.append({
         "module": "panel",
         "name": "EasyServer 管理面板",
         "subdomain": panel_subdomain,
         "port": 8900,
         "hostname": panel_hostname,
-        "published": panel_hostname in [r["hostname"] for r in routes],
+        "all_hostnames": panel_all_hostnames,
+        "published": panel_published,
     })
+
+    # 为每条路由标记所属域名（按域名长度降序匹配，最长优先）
+    sorted_domains = sorted(set(d.get("domain", "") for d in all_domains if d.get("domain")), key=len, reverse=True)
+
+    # 收集所有服务的 subdomain 集合（用于判断路由是否被服务使用）
+    service_subdomains = set(s["subdomain"] for s in services if s.get("subdomain"))
+
+    enriched_routes = []
+    # 记录每个域名下是否有已发布的路由
+    domain_has_published = set()
+    for r in routes:
+        rh = r.get("hostname", "")
+        route_domain = ""
+        for d in sorted_domains:
+            if rh == d or rh.endswith("." + d):
+                route_domain = d
+                break
+        # 判断该路由 hostname 是否匹配某个已发布服务的 subdomain
+        route_published = False
+        for sub in service_subdomains:
+            if rh.startswith(sub + "."):
+                route_published = True
+                break
+        if route_published and route_domain:
+            domain_has_published.add(route_domain)
+        enriched_routes.append({
+            "hostname": rh,
+            "service": r.get("service", ""),
+            "domain": route_domain,
+            "published": route_published,
+        })
+
+    # 多域名信息（all_domains 已在上方获取）
+    domains_info = [
+        {
+            "domain": d.get("domain", ""),
+            "dns_provider": d.get("dns_provider", ""),
+            "purpose": d.get("purpose", ""),
+            "status": d.get("status", ""),
+            "published": d.get("domain", "") in domain_has_published,
+        }
+        for d in all_domains
+    ]
 
     return {
         "configured": bool(tunnel_id),
@@ -364,9 +467,10 @@ async def status():
         "tunnel_name": cfg.get("tunnel_name", ""),
         "api_token_masked": _mask(api_token),
         "domain": domain,
+        "domains": domains_info,
         "connected": connected,
         "error": error,
-        "routes": routes,
+        "routes": enriched_routes,
         "services": services,
     }
 
@@ -376,7 +480,8 @@ async def publish(request: PublishRequest):
     """发布服务：添加 ingress 路由 + 创建 DNS CNAME 记录"""
     cm = _get_config_manager()
     cfg = _tunnel_cfg(cm)
-    domain = _get_domain(cm)
+    target_domain = _resolve_domain(cm, request.domain)
+    domain_cfg = cm.get_domain_config(target_domain)
     tunnel_id = cfg.get("tunnel_id", "")
     api_token = cfg.get("api_token", "")
     account_id = cfg.get("account_id", "")
@@ -384,7 +489,7 @@ async def publish(request: PublishRequest):
 
     if not tunnel_id or not api_token:
         raise HTTPException(status_code=400, detail="尚未完成 Cloudflare Tunnel 接入，请先一键接入")
-    if not domain:
+    if not target_domain:
         raise HTTPException(status_code=400, detail="请先配置域名")
 
     subdomain = request.subdomain.strip().lower()
@@ -393,10 +498,11 @@ async def publish(request: PublishRequest):
     if not (1 <= request.port <= 65535):
         raise HTTPException(status_code=400, detail="端口号必须在 1-65535 之间")
 
-    hostname = f"{subdomain}.{domain}"
+    hostname = f"{subdomain}.{target_domain}"
     service = f"{request.protocol}://localhost:{request.port}"
     client = CloudflareClient(api_token)
-    dns_provider = _get_dns_provider(cm)
+    # 优先使用目标域名配置的 dns_provider，否则回退全局配置
+    dns_provider = domain_cfg.get("dns_provider") or _get_dns_provider(cm)
 
     # 未显式配置 dns_provider 时回退旧行为：有 zone_id 走 Cloudflare zone 分支，否则提示先完成网络配置
     if not dns_provider:
@@ -408,8 +514,9 @@ async def publish(request: PublishRequest):
                 detail="尚未配置 DNS 提供商且未获取到 Zone ID，请先在网络配置中完成 DNS 提供商配置后重试",
             )
 
-    # 0a. 阿里云提供商凭证预检查（避免 ingress 更新后才发现凭证缺失）
+    # 0a. DNS 凭证预检查（避免 ingress 更新后才发现凭证缺失）
     aliyun_creds = None
+    cf_dns_token = None
     if dns_provider == "aliyun":
         aliyun_creds = _get_aliyun_credentials(cm)
         if not (aliyun_creds["key"] and aliyun_creds["secret"]):
@@ -417,6 +524,8 @@ async def publish(request: PublishRequest):
                 status_code=400,
                 detail="当前 DNS 提供商为阿里云，但尚未配置阿里云 AccessKey。请在设置 → 网络配置中填写阿里云 AccessKey 后重试",
             )
+    elif dns_provider == "cloudflare":
+        cf_dns_token = _get_cf_dns_token(cm)
 
     # 0b. 确保 cloudflare-tunnel 模块已安装并运行（幂等 docker compose up -d）
     module_started = False
@@ -447,23 +556,40 @@ async def publish(request: PublishRequest):
     dns_created = False
     dns_action = "existing"
     dns_warning = ""
+    dns_error = ""
     content = f"{tunnel_id}.cfargotunnel.com"
     if dns_provider == "aliyun":
         try:
             ali_client = AliyunDNSClient(aliyun_creds["key"], aliyun_creds["secret"])
-            existing = ali_client.find_record(domain, subdomain, "CNAME")
+            existing = ali_client.find_record(target_domain, subdomain, "CNAME")
             if not existing:
                 # 阿里云 DNS 强制 CNAME 与同名 A/AAAA 互斥，创建前先清理域名反代遗留的 A/AAAA 记录
+                cleanup_failed = []
                 for legacy_type in ("A", "AAAA"):
                     try:
-                        legacy = ali_client.find_record(domain, subdomain, legacy_type)
+                        legacy = ali_client.find_record(target_domain, subdomain, legacy_type)
                         if legacy:
                             ali_client.delete_record(legacy["RecordId"])
+                            logger.info(
+                                "已清理同名 %s 记录 (RecordId=%s, Value=%s) 以便创建 CNAME",
+                                legacy_type, legacy.get("RecordId", "?"), legacy.get("Value", "?"),
+                            )
                     except AliyunDNSAPIError as e:
-                        dns_warning = f"清理同名 {legacy_type} 记录失败: {e}（如 CNAME 创建被拒绝，请手动删除该记录后重试）"
-                ali_client.add_record(domain, subdomain, "CNAME", content)
-                dns_created = True
-                dns_action = "created"
+                        logger.error(
+                            "清理同名 %s 记录失败 (RecordId=%s, Value=%s): %s",
+                            legacy_type, legacy.get("RecordId", "?"), legacy.get("Value", "?"), e,
+                        )
+                        cleanup_failed.append(legacy_type)
+                if cleanup_failed:
+                    dns_error = (
+                        f"删除旧 DNS 记录失败（{', '.join(cleanup_failed)}），"
+                        f"请手动在阿里云控制台删除 {subdomain}.{target_domain} 的 A/AAAA 记录后重试"
+                    )
+                    logger.error("DNS 清理失败，跳过 CNAME 创建: %s", dns_error)
+                else:
+                    ali_client.add_record(target_domain, subdomain, "CNAME", content)
+                    dns_created = True
+                    dns_action = "created"
             elif existing.get("Value") != content:
                 # 同名 CNAME 指向其他目标，更新为隧道地址（记录旧值告警，避免静默覆盖）
                 old_value = existing.get("Value", "")
@@ -473,10 +599,16 @@ async def publish(request: PublishRequest):
         except AliyunDNSAPIError as e:
             dns_warning = f"阿里云 DNS 记录创建失败: {e}（可稍后手动添加 CNAME {hostname} → {content}）"
     elif zone_id:
+        # Cloudflare DNS 操作使用 DNS token（预检查已在 0a 阶段完成，此处兜底获取）
         try:
-            records = client.list_dns_records(zone_id, hostname)
+            # 多域名时每个域名可能有不同的 zone_id
+            target_zone_id = zone_id
+            if domain_cfg.get("dns_provider") == "cloudflare" and domain_cfg.get("zone_id"):
+                target_zone_id = domain_cfg["zone_id"]
+            dns_client = CloudflareClient(cf_dns_token)
+            records = dns_client.list_dns_records(target_zone_id, hostname)
             if not records:
-                client.create_dns_record(zone_id, subdomain, content, proxied=True)
+                dns_client.create_dns_record(target_zone_id, subdomain, content, proxied=True)
                 dns_created = True
                 dns_action = "created"
         except CloudflareAPIError as e:
@@ -494,10 +626,12 @@ async def publish(request: PublishRequest):
     return {
         "success": True,
         "hostname": hostname,
+        "domain": target_domain,
         "service": service,
         "dns_created": dns_created,
         "dns_action": dns_action,
         "dns_warning": dns_warning,
+        "dns_error": dns_error,
         "module_auto_started": module_started,
         "message": f"已发布 {hostname} → {service}",
     }
@@ -513,13 +647,46 @@ async def unpublish(request: UnpublishRequest):
     api_token = cfg.get("api_token", "")
     account_id = cfg.get("account_id", "")
     zone_id = cfg.get("zone_id", "")
-    domain = _get_domain(cm)
+
+    # 从 hostname 提取域名（如 sub.lfblog.top → lfblog.top）
+    # 优先匹配已知域名列表，回退使用全局 domain
+    target_domain = ""
+    known_domains = sorted([d.get("domain", "") for d in cm.get_domains() if d.get("domain")], key=len, reverse=True)
+    for d in known_domains:
+        if hostname.endswith("." + d):
+            target_domain = d
+            break
+    if not target_domain:
+        target_domain = _get_domain(cm)
+
+    domain_cfg = cm.get_domain_config(target_domain) if target_domain else {}
 
     if not tunnel_id or not api_token:
         raise HTTPException(status_code=400, detail="尚未完成 Cloudflare Tunnel 接入")
 
+    # 解析 dns_provider（与 publish 保持一致的逻辑）
+    dns_provider = domain_cfg.get("dns_provider") or _get_dns_provider(cm)
+    if not dns_provider:
+        if zone_id:
+            dns_provider = "cloudflare"
+        else:
+            dns_provider = None
+
+    # DNS 凭证预检查（避免 ingress 更新后才发现凭证缺失）
+    aliyun_creds = None
+    cf_dns_token = None
+    warnings_list = []
+    if dns_provider == "aliyun":
+        aliyun_creds = _get_aliyun_credentials(cm)
+        if not (aliyun_creds["key"] and aliyun_creds["secret"]):
+            warnings_list.append("阿里云 AccessKey 未配置，DNS 记录未自动删除（请先完成网络配置或手动删除）")
+    elif dns_provider == "cloudflare":
+        try:
+            cf_dns_token = _get_cf_dns_token(cm)
+        except HTTPException:
+            warnings_list.append("Cloudflare DNS Token 未配置，DNS 记录未自动删除（请先完成网络配置或手动删除）")
+
     client = CloudflareClient(api_token)
-    warnings = []
 
     # 1. 更新 ingress
     try:
@@ -535,29 +702,33 @@ async def unpublish(request: UnpublishRequest):
         raise HTTPException(status_code=500, detail=f"移除路由异常: {e}")
 
     # 2. 删除 DNS 记录（按 dns_provider 分流，记录不存在时宽容处理）
-    dns_provider = _get_dns_provider(cm)
     if dns_provider == "aliyun":
-        aliyun_creds = _get_aliyun_credentials(cm)
-        if aliyun_creds["key"] and aliyun_creds["secret"]:
+        if aliyun_creds and aliyun_creds["key"] and aliyun_creds["secret"]:
             try:
                 # 从 hostname 还原 RR 前缀（sub.domain → sub）
-                rr = hostname[: -(len(domain) + 1)] if domain and hostname.endswith("." + domain) else hostname
+                rr = hostname[: -(len(target_domain) + 1)] if target_domain and hostname.endswith("." + target_domain) else hostname
                 ali_client = AliyunDNSClient(aliyun_creds["key"], aliyun_creds["secret"])
-                rec = ali_client.find_record(domain, rr, "CNAME")
+                rec = ali_client.find_record(target_domain, rr, "CNAME")
                 if rec:
                     ali_client.delete_record(rec["RecordId"])
             except AliyunDNSAPIError as e:
-                warnings.append(f"阿里云 DNS 记录删除失败: {e}")
-        else:
-            warnings.append("未配置阿里云 AccessKey，DNS 记录未自动删除（如需可手动删除）")
+                warnings_list.append(f"阿里云 DNS 记录删除失败: {e}")
     elif zone_id:
-        try:
-            for rec in client.list_dns_records(zone_id, hostname):
-                client.delete_dns_record(zone_id, rec["id"])
-        except CloudflareAPIError as e:
-            warnings.append(f"DNS 记录删除失败: {e}")
+        if not cf_dns_token:
+            warnings_list.append("Cloudflare DNS Token 未配置，DNS 记录未自动删除（请先完成网络配置或手动删除）")
+        else:
+            try:
+                # 多域名时每个域名可能有不同的 zone_id
+                target_zone_id = zone_id
+                if domain_cfg.get("dns_provider") == "cloudflare" and domain_cfg.get("zone_id"):
+                    target_zone_id = domain_cfg["zone_id"]
+                dns_client = CloudflareClient(cf_dns_token)
+                for rec in dns_client.list_dns_records(target_zone_id, hostname):
+                    dns_client.delete_dns_record(target_zone_id, rec["id"])
+            except CloudflareAPIError as e:
+                warnings_list.append(f"DNS 记录删除失败: {e}")
     else:
-        warnings.append("未配置 DNS 提供商且未获取到 Zone ID，DNS 记录未自动删除（请先完成网络配置或手动删除）")
+        warnings_list.append("未配置 DNS 提供商且未获取到 Zone ID，DNS 记录未自动删除（请先完成网络配置或手动删除）")
 
     # 3. 更新本地配置
     routes = [r for r in cfg.get("routes", []) if r.get("hostname") != hostname]
@@ -570,4 +741,4 @@ async def unpublish(request: UnpublishRequest):
     except Exception as e:
         logger.warning("后台 DNS 同步任务调度失败: %s", e)
 
-    return {"success": True, "hostname": hostname, "warnings": warnings}
+    return {"success": True, "hostname": hostname, "domain": target_domain, "warnings": warnings_list}

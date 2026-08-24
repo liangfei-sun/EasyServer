@@ -4,12 +4,13 @@ EasyServer DNS Sync API
 支持提供商：阿里云（alidns）、Cloudflare
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from ..core.config_manager import ConfigManager
 from ..core.module_loader import ModuleLoader
 from ..core.alidns_api import AliyunDNSClient, AliyunDNSAPIError
 from ..core.cloudflare_api import CloudflareClient, CloudflareAPIError
 from ..core.ip_utils import get_public_ips
+from typing import Optional
 import logging
 import os
 
@@ -70,13 +71,15 @@ def _get_cloudflare_token(cm: ConfigManager) -> str:
     return env.get("CF_API_TOKEN", "")
 
 
-def _get_tunnel_published_subdomains(cm: ConfigManager) -> set:
-    """提取已通过 Cloudflare Tunnel 发布的子域名集合（cloudflare_tunnel.routes 为路由唯一数据源）"""
+def _get_tunnel_published_subdomains(cm: ConfigManager, domain: Optional[str] = None) -> set:
+    """提取已通过 Cloudflare Tunnel 发布的子域名集合（cloudflare_tunnel.routes 为路由唯一数据源）。
+    domain 指定时只提取该域名下的子域名。
+    """
     cfg = cm.load_config()
-    domain = cfg.get("domain", "")
+    target_domain = domain or cm.get_primary_domain()
     tunnel_cfg = cfg.get("cloudflare_tunnel", {}) or {}
     routes = tunnel_cfg.get("routes", []) or []
-    suffix = f".{domain}" if domain else ""
+    suffix = f".{target_domain}" if target_domain else ""
     subs = set()
     for r in routes:
         hostname = (r.get("hostname") or "").strip()
@@ -84,15 +87,17 @@ def _get_tunnel_published_subdomains(cm: ConfigManager) -> set:
             continue
         if suffix and hostname.endswith(suffix):
             subs.add(hostname[: -len(suffix)])
-        else:
+        elif not suffix:
             subs.add(hostname)
     return subs
 
 
-def _get_target_subdomains(cm: ConfigManager, ml: ModuleLoader, exclude_tunnel_published: bool = False) -> list:
+def _get_target_subdomains(cm: ConfigManager, ml: ModuleLoader, exclude_tunnel_published: bool = False, domain: Optional[str] = None) -> list:
     """收集需要解析的子域名列表（已安装模块的 access.subdomain + 管理面板）
-    exclude_tunnel_published=True 时排除已通过 Tunnel 发布的子域名（避免覆盖其 CNAME 记录）"""
-    excluded = _get_tunnel_published_subdomains(cm) if exclude_tunnel_published else set()
+    exclude_tunnel_published=True 时排除已通过 Tunnel 发布的子域名（避免覆盖其 CNAME 记录）
+    domain 指定时只收集该域名下的子域名。
+    """
+    excluded = _get_tunnel_published_subdomains(cm, domain=domain) if exclude_tunnel_published else set()
     subdomains = []
     installed_ids = cm.get_installed_modules()
     for mid in installed_ids:
@@ -130,14 +135,15 @@ def _build_targets(ips: dict) -> list:
 
 
 @router.get("/status")
-async def dns_status():
+async def dns_status(domain: Optional[str] = Query(None, description="指定域名，未指定时返回主域名状态")):
     """查询 DNS 同步状态：提供商、凭证、公网 IP、各子域名记录现状"""
     cm = _get_config_manager()
     ml = _get_module_loader()
     cfg = cm.load_config()
 
-    provider = cfg.get("dns_provider", "aliyun")
-    domain = cfg.get("domain", "")
+    target_domain = domain or cm.get_primary_domain()
+    domain_cfg = cm.get_domain_config(target_domain) if domain else {}
+    provider = domain_cfg.get("dns_provider") or cfg.get("dns_provider", "aliyun")
     ips = get_public_ips()
 
     # 凭证状态
@@ -150,14 +156,14 @@ async def dns_status():
 
     # 查询各子域名现有记录
     records_status = []
-    if creds_configured and domain:
+    if creds_configured and target_domain:
         try:
             if provider == "aliyun":
                 aliyun = _get_aliyun_credentials(cm)
                 client = AliyunDNSClient(aliyun["key"], aliyun["secret"])
-                for item in _get_target_subdomains(cm, ml):
+                for item in _get_target_subdomains(cm, ml, domain=target_domain):
                     existing = []
-                    for rec in client.describe_records(domain, rr=item["subdomain"]):
+                    for rec in client.describe_records(target_domain, rr=item["subdomain"]):
                         existing.append({
                             "type": rec.get("Type"),
                             "value": rec.get("Value"),
@@ -170,13 +176,13 @@ async def dns_status():
                     })
             elif provider == "cloudflare":
                 client = CloudflareClient(_get_cloudflare_token(cm))
-                zone = client.get_zone(domain)
+                zone = client.get_zone(target_domain)
                 if not zone:
                     records_status.append({"error": "域名未托管到 Cloudflare 或 Token 无 Zone 权限"})
                 else:
                     zone_id = zone["id"]
-                    for item in _get_target_subdomains(cm, ml):
-                        hostname = f"{item['subdomain']}.{domain}"
+                    for item in _get_target_subdomains(cm, ml, domain=target_domain):
+                        hostname = f"{item['subdomain']}.{target_domain}"
                         existing = []
                         for rec in client.list_dns_records(zone_id, hostname):
                             existing.append({
@@ -195,7 +201,7 @@ async def dns_status():
 
     return {
         "provider": provider,
-        "domain": domain,
+        "domain": target_domain,
         "credentials_configured": creds_configured,
         "public_ipv4": ips["ipv4"],
         "public_ipv6": ips["ipv6"],
@@ -205,16 +211,21 @@ async def dns_status():
 
 
 @router.post("/sync")
-async def sync_dns():
-    """自动同步 DNS 记录：为所有子域名创建/更新 A / AAAA 记录（幂等）"""
+async def sync_dns(domain: Optional[str] = Query(None, description="指定域名，未指定时同步主域名")):
+    """自动同步 DNS 记录：为所有子域名创建/更新 A / AAAA 记录（幂等）。
+    domain 指定时只同步该域名的子域名记录；未指定时同步主域名（向后兼容）。
+    """
     cm = _get_config_manager()
     ml = _get_module_loader()
     cfg = cm.load_config()
 
-    provider = cfg.get("dns_provider", "aliyun")
-    domain = cfg.get("domain", "")
-    if not domain:
+    target_domain = domain or cm.get_primary_domain()
+    if not target_domain:
         raise HTTPException(status_code=400, detail="请先配置域名")
+
+    # 获取该域名的 DNS 提供商配置
+    domain_cfg = cm.get_domain_config(target_domain) if domain else {}
+    provider = domain_cfg.get("dns_provider") or cfg.get("dns_provider", "aliyun")
 
     if provider not in ("aliyun", "cloudflare"):
         raise HTTPException(status_code=400, detail="当前 DNS 提供商暂不支持自动同步，请先在网络配置中切换到阿里云或 Cloudflare")
@@ -247,7 +258,7 @@ async def sync_dns():
         and bool(tunnel_cfg.get("tunnel_id"))
         and bool(tunnel_routes)
     )
-    subdomains = _get_target_subdomains(cm, ml, exclude_tunnel_published=exclude_tunnel)
+    subdomains = _get_target_subdomains(cm, ml, exclude_tunnel_published=exclude_tunnel, domain=target_domain)
 
     if provider == "aliyun":
         client = AliyunDNSClient(creds["key"], creds["secret"])
@@ -255,11 +266,11 @@ async def sync_dns():
             rr = item["subdomain"]
             # 冲突保护（与 Cloudflare provider 对齐）：存在同名 CNAME（Tunnel 发布）时跳过 A/AAAA 同步
             try:
-                cname_conflict = client.find_record(domain, rr, "CNAME")
+                cname_conflict = client.find_record(target_domain, rr, "CNAME")
             except AliyunDNSAPIError:
                 cname_conflict = None
             if cname_conflict:
-                logger.info("DNS 同步跳过 %s.%s：存在同名 CNAME 记录（Tunnel 发布），避免冲突", rr, domain)
+                logger.info("DNS 同步跳过 %s.%s：存在同名 CNAME 记录（Tunnel 发布），避免冲突", rr, target_domain)
                 for rec_type, value in targets:
                     results.append({
                         "subdomain": rr,
@@ -273,9 +284,9 @@ async def sync_dns():
             for rec_type, value in targets:
                 status = {"subdomain": rr, "type": rec_type, "value": value}
                 try:
-                    existing = client.find_record(domain, rr, rec_type)
+                    existing = client.find_record(target_domain, rr, rec_type)
                     if not existing:
-                        client.add_record(domain, rr, rec_type, value)
+                        client.add_record(target_domain, rr, rec_type, value)
                         status["action"] = "created"
                     elif existing.get("Value") == value:
                         status["action"] = "unchanged"
@@ -291,7 +302,7 @@ async def sync_dns():
     else:
         client = CloudflareClient(token)
         try:
-            zone = client.get_zone(domain)
+            zone = client.get_zone(target_domain)
         except CloudflareAPIError as e:
             raise HTTPException(status_code=400, detail=f"Cloudflare Zone 查询失败: {e}")
         if not zone:
@@ -299,7 +310,7 @@ async def sync_dns():
         zone_id = zone["id"]
 
         for item in subdomains:
-            hostname = f"{item['subdomain']}.{domain}"
+            hostname = f"{item['subdomain']}.{target_domain}"
             for rec_type, value in targets:
                 status = {"subdomain": item["subdomain"], "type": rec_type, "value": value}
                 try:
@@ -342,7 +353,7 @@ async def sync_dns():
     return {
         "success": True,
         "provider": provider,
-        "domain": domain,
+        "domain": target_domain,
         "public_ipv4": ips["ipv4"],
         "public_ipv6": ips["ipv6"],
         "summary": {"created": created, "updated": updated, "unchanged": unchanged, "skipped": skipped, "failed": failed},

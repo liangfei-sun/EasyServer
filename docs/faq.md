@@ -220,6 +220,22 @@ docker compose up -d
 
 ---
 
+## Tunnel 相关
+
+**Q: Tunnel 服务外网无法访问怎么办？**
+A: 最常见的原因是域名 DNS 未托管在 Cloudflare。Cloudflare Tunnel 要求域名的权威 DNS 必须在 Cloudflare，否则 CNAME 记录无法生效。解决方案：注册一个免费域名（如 dpdns.org），将 NS 迁移到 Cloudflare，然后在 EasyServer 中添加为 Tunnel 专用域名。详见[多域名配置章节](network-config.md#6-多域名配置)。
+
+**Q: 如何为 Tunnel 添加新域名？**
+A: 在「网络配置」→「域名管理」中点击「添加域名」，填写域名、选择 DNS 提供商（Cloudflare）和用途（Tunnel 中转），系统会自动验证并配置。详见[多域名配置章节](network-config.md#如何在-easyserver-中添加-tunnel-域名)。
+
+**Q: cfargotunnel.com 是什么？**
+A: `cfargotunnel.com` 是 Cloudflare Tunnel 的专用 DNS 域名。当您配置 Tunnel 服务时，系统会创建 CNAME 记录指向 `{tunnel-id}.cfargotunnel.com`。Cloudflare 边缘网络会根据此 CNAME 将流量路由到您的 Tunnel。**重要限制**：此 CNAME 仅在域名的权威 DNS 托管在 Cloudflare 时有效。
+
+**Q: 如何判断域名 DNS 是否在 Cloudflare？**
+A: 执行 `dig NS your-domain.com +short`，如果返回的域名服务器包含 `ns.cloudflare.com`，则说明 DNS 已托管在 Cloudflare。否则需要迁移 NS 记录。
+
+---
+
 ## 其他问题
 
 ### 管理面板打不开？

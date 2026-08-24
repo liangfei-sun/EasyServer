@@ -66,11 +66,18 @@ docs:
 
     ### 主要功能
     - **多端同步**：Windows / macOS / Linux / iOS / Android 客户端自动同步文件
-    - **在线预览**：图片、视频、音视频、PDF、Office 文档直接在浏览器中查看
+    - **在线预览**：图片、视频、音视频、PDF、Office 文档直接在浏览器中查看（视频预览基于 ffmpeg，镜像已内置）
     - **外链分享**：生成带有效期和密码的分享链接
     - **WebDAV**：地址 `https://cloud.你的域名:8443/remote.php/dav`，可挂载为本地磁盘
     - **相册备份**：手机端开启「自动上传」，照片视频自动备份
     - **应用生态**：内置日历、联系人、笔记、OnlyOffice 在线编辑等应用
+
+    ### 视频预览说明
+    - 官方镜像不含 ffmpeg，视频缩略图/预览无法生成；本项目通过模块内 Dockerfile 基于官方镜像扩展安装 ffmpeg 解决
+    - Nextcloud 新版默认未启用视频预览生成器，首次部署后需执行一次：`docker exec -u www-data easyserver-nextcloud php occ config:system:set enabledPreviewProviders --type json --value='["OC\\Preview\\Movie","OC\\Preview\\MarkDown","OC\\Preview\\TXT","OC\\Preview\\OpenDocument","OC\\Preview\\PNG","OC\\Preview\\JPEG","OC\\Preview\\GIF","OC\\Preview\\BMP","OC\\Preview\\XBitmap","OC\\Preview\\Krita","OC\\Preview\\WebP"]'`（该配置写入 config.php，随数据卷持久化）
+    - 已调大预览大小上限：`preview_max_filesize_video/image` 均为 2048MB，更大视频不生成预览
+    - 播放格式取决于浏览器：mp4/H.264 等可直接播放；mkv 等编码格式浏览器无法解码时只能下载后用本地播放器播放（如需在线转码播放可配合 Jellyfin 模块）
+    - 首次预览较大视频时缩略图生成较慢属正常现象，可稍后刷新
 
     ### 数据存储
     - 程序与配置：`data/nextcloud/html/`
@@ -94,8 +101,10 @@ docs:
       a: "检查 Nginx 反代（已默认不限）与容器内 PHP_UPLOAD_LIMIT（默认 10G），并确认客户端与服务器网络稳定"
     - q: "如何备份数据？"
       a: "进入维护模式 `docker exec -it easyserver-nextcloud php occ maintenance:mode --on` 后备份 `data/nextcloud/` 目录，备份完成再关闭维护模式；该目录已纳入 EasyServer 备份模块"
+    - q: "视频无法预览/没有缩略图？"
+      a: "两步排查：① 确认容器内已装 ffmpeg（`docker exec easyserver-nextcloud ffmpeg -version`），缺失时基于 Dockerfile 重建：`docker compose -f modules/nextcloud/docker-compose.yml up -d --build`；② 确认已启用 Movie 预览生成器：`docker exec -u www-data easyserver-nextcloud php occ config:system:get enabledPreviewProviders` 应包含 OC\\Preview\\Movie（Nextcloud 新版本默认不启用，需用 config:system:set 写入，详见 usage 视频预览说明）；浏览器无法播放 mkv 等编码属浏览器限制，可下载后本地播放"
     - q: "如何升级 Nextcloud？"
-      a: "执行 `docker compose -f modules/nextcloud/docker-compose.yml pull && docker compose -f modules/nextcloud/docker-compose.yml up -d`，升级前务必先备份数据"
+      a: "执行 `docker compose -f modules/nextcloud/docker-compose.yml build --pull && docker compose -f modules/nextcloud/docker-compose.yml up -d`，升级前务必先备份数据"
     - q: "IP 直连访问异常？"
       a: "hybrid/IP 直连模式下，需在安装配置的「访问域名」中追加服务器 IP；如反向代理链路变化请重启容器使 trusted_proxies 生效"
 

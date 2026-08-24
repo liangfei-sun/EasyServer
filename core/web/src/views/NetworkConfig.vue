@@ -28,6 +28,55 @@
       </el-descriptions>
     </el-card>
 
+    <!-- 域名管理 -->
+    <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px" shadow="hover">
+      <template #header>
+        <div class="card-header-row">
+          <span style="font-weight:600">🌐 域名管理</span>
+          <el-button type="primary" size="small" @click="showAddDomain = true">
+            <el-icon><Plus /></el-icon> 添加域名
+          </el-button>
+        </div>
+      </template>
+      <div v-for="(d, idx) in domains" :key="d.domain" class="domain-item">
+        <div class="domain-item-row">
+          <div>
+            <span style="font-weight:500">{{ d.domain }}</span>
+            <el-tag :type="d.status === 'active' ? 'success' : d.status === 'warning' ? 'warning' : 'danger'" size="small" style="margin-left: 8px">
+              {{ d.status === 'active' ? '✅ 正常' : d.status === 'warning' ? '⚠️ 警告' : '❌ 异常' }}
+            </el-tag>
+          </div>
+          <div class="domain-item-actions">
+            <span class="domain-item-meta">
+              DNS: {{ dnsProviderLabel(d.dns_provider) }} | 用途: {{ purposeLabel(d.purpose) }}
+            </span>
+            <el-button size="small" @click="verifyDomain(d.domain)" :loading="d.verifying">
+              验证
+            </el-button>
+          </div>
+        </div>
+        <!-- 验证结果详情 -->
+        <div v-if="d.checks" class="domain-verify-detail">
+          <div v-for="(check, key) in d.checks" :key="key" class="verify-check-item">
+            <span :class="check.ok ? 'text-green' : 'text-red'">
+              {{ check.ok ? '✅' : '❌' }}
+            </span>
+            <span class="ml-1">{{ check.message }}</span>
+          </div>
+          <div v-if="d.errors && d.errors.length > 0" class="verify-errors">
+            <div v-for="(err, i) in d.errors" :key="i" class="verify-error-item">
+              ⚠️ {{ err }}
+              <a href="/docs/network-config#troubleshooting" class="text-blue underline ml-1" target="_blank">
+                查看修复指南
+              </a>
+            </div>
+          </div>
+        </div>
+        <el-divider v-if="idx < domains.length - 1" />
+      </div>
+      <div v-if="domains.length === 0" class="domain-empty">暂无域名配置</div>
+    </el-card>
+
     <!-- 区块2：当前配置管理 / 智能推荐 -->
 
     <!-- 场景A：未配置网络 - 智能推荐 -->
@@ -112,41 +161,46 @@
       <!-- 服务发布卡片 -->
       <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
         <template #header><span style="font-weight:600">服务发布</span></template>
-        <el-tabs v-model="publishTab">
-          <el-tab-pane :label="`已发布 (${tunnelStatus.routes?.length || 0})`" name="published">
-            <el-empty v-if="!tunnelStatus.routes?.length" description="暂无已发布的服务" :image-size="60" />
-            <div v-for="r in tunnelStatus.routes" :key="r.hostname" class="route-row">
-              <div class="route-info">
-                <a :href="'https://' + r.hostname" target="_blank" class="route-link">https://{{ r.hostname }}</a>
-                <span class="route-service">{{ r.service }}</span>
+        <el-table :data="groupedServices" size="small" empty-text="暂无可以发布的服务">
+          <el-table-column prop="name" label="服务" min-width="120" />
+          <el-table-column label="访问地址" min-width="240">
+            <template #default="{ row }">
+              <div style="line-height: 1.8">
+                <div v-for="h in row.hostnames" :key="h.hostname" style="font-size: 12px">
+                  <span v-if="h.published" style="margin-right: 4px">✅</span>
+                  <span v-else style="margin-right: 4px; color: #c0c4cc">○</span>
+                  <span :style="h.published ? '' : 'color: #909399'">{{ h.hostname }}</span>
+                </div>
               </div>
-              <el-button type="danger" size="small" plain @click="unpublishRoute(r.hostname)">取消发布</el-button>
-            </div>
-          </el-tab-pane>
-          <el-tab-pane :label="`可发布 (${tunnelStatus.services?.length || 0})`" name="available">
-            <el-table :data="tunnelStatus.services" size="small" empty-text="暂无可以发布的服务">
-              <el-table-column prop="name" label="服务" min-width="140" />
-              <el-table-column prop="hostname" label="访问地址" min-width="160">
-                <template #default="{ row }">
-                  <span v-if="row.hostname">{{ row.hostname }}</span>
-                  <span v-else style="color:#909399">未配置域名</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="port" label="端口" width="70" />
-              <el-table-column label="操作" width="110">
-                <template #default="{ row }">
-                  <el-button v-if="row.published" type="success" size="small" disabled>已发布</el-button>
-                  <el-button v-else type="primary" size="small" :loading="publishingId === row.module" @click="publishService(row)">
-                    发布
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div class="form-help" style="margin-top: 8px">
-              发布后自动创建路由和 DNS 记录，通过 https://子域名.域名 访问（免端口号）
-            </div>
-          </el-tab-pane>
-        </el-tabs>
+            </template>
+          </el-table-column>
+          <el-table-column label="域名" width="140">
+            <template #default="{ row }">
+              <div style="font-size: 12px; line-height: 1.8">
+                <div v-for="h in row.hostnames" :key="h.domain">
+                  <el-tag v-if="h.published" size="small" type="success" plain style="margin: 2px">{{ h.domain }}</el-tag>
+                  <span v-else style="color: #c0c4cc">{{ h.domain }}</span>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="110">
+            <template #default="{ row }">
+              <el-button v-if="row.allPublished" type="danger" size="small" plain @click="unpublishAllHostnames(row)">
+                取消发布
+              </el-button>
+              <el-button v-else-if="row.nonePublished" type="primary" size="small" @click="publishFirstAvailable(row)">
+                发布
+              </el-button>
+              <el-button v-else type="warning" size="small" plain @click="publishFirstAvailable(row)">
+                管理
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="form-help" style="margin-top: 8px">
+          发布后自动创建路由和 DNS 记录，通过 https://子域名.域名 访问（免端口号）
+        </div>
       </el-card>
     </template>
 
@@ -411,18 +465,16 @@
       </el-collapse>
     </el-card>
 
-    <!-- 区块4：域名信息（底部） -->
+    <!-- 区块4：SSL 配置（底部） -->
     <el-card style="max-width: 800px; width: 100%; margin-bottom: 20px">
-      <template #header><span style="font-weight:600">域名信息</span></template>
+      <template #header><span style="font-weight:600">🔒 SSL 配置</span></template>
       <el-form label-width="100px">
-        <el-form-item label="主域名">
-          <el-input v-model="domainInput" placeholder="example.com" />
-        </el-form-item>
         <el-form-item label="SSL 邮箱">
           <el-input v-model="sslEmailInput" placeholder="admin@example.com" />
+          <div class="form-help">用于 Let's Encrypt 自动签发 / 续签 SSL 证书</div>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="saveDomain" :loading="savingDomainInfo">保存域名</el-button>
+          <el-button type="primary" @click="saveDomain" :loading="savingDomainInfo">保存</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -475,6 +527,33 @@
       </div>
     </el-dialog>
 
+    <!-- 添加域名对话框 -->
+    <el-dialog v-model="showAddDomain" title="添加域名" width="500px">
+      <el-form :model="newDomainForm" label-width="100px">
+        <el-form-item label="域名">
+          <el-input v-model="newDomainForm.domain" placeholder="例如：mytunnel.dpdns.org" />
+        </el-form-item>
+        <el-form-item label="DNS 提供商">
+          <el-select v-model="newDomainForm.dns_provider" placeholder="选择 DNS 提供商">
+            <el-option v-for="p in dnsProviders" :key="p.id" :label="p.name" :value="p.id" />
+            <el-option v-if="!dnsProviders.length" label="阿里云" value="aliyun" />
+            <el-option v-if="!dnsProviders.length" label="Cloudflare" value="cloudflare" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="用途">
+          <el-select v-model="newDomainForm.purpose" placeholder="选择用途">
+            <el-option label="域名反代（Nginx）" value="nginx" />
+            <el-option label="Tunnel 中转" value="tunnel" />
+            <el-option label="两者兼用" value="both" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddDomain = false">取消</el-button>
+        <el-button type="primary" @click="addDomain" :loading="addingDomain">添加</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 域名反代配置弹窗 -->
     <el-dialog v-model="showDomainSetup" title="域名反代配置" :width="isMobile ? '95%' : '680px'" top="5vh" :close-on-click-modal="false">
       <el-form :model="domainForm" label-width="120px">
@@ -512,6 +591,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
+import { Plus, TopRight } from '@element-plus/icons-vue'
 import api from '../api'
 
 // 网络模式切换涉及模块安装与启动，首次切换耗时较长，单独放宽超时（10 分钟），
@@ -526,7 +606,6 @@ onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
 
 // ===== 基础状态 =====
 const domain = ref('')
-const domainInput = ref('')
 const sslEmailInput = ref('')
 const currentMode = ref('domain')
 const isConfigured = ref(false)
@@ -541,6 +620,133 @@ const accessModeLabels = {
 }
 const accessModeLabel = computed(() => accessModeLabels[currentMode.value] || '未配置')
 
+// ===== 域名管理 =====
+const domains = ref([])
+const showAddDomain = ref(false)
+const addingDomain = ref(false)
+const newDomainForm = ref({ domain: '', dns_provider: 'cloudflare', purpose: 'tunnel' })
+const selectedTunnelDomain = ref('')
+
+const tunnelDomains = computed(() =>
+  domains.value.filter(d => d.purpose === 'tunnel' || d.purpose === 'both')
+)
+
+// 将服务列表展开为每行一个 hostname 的格式
+const publishableRows = computed(() => {
+  const services = tunnelStatus.value?.services || []
+  const routeHostnames = new Set((tunnelStatus.value?.routes || []).map(r => r.hostname))
+  const rows = []
+  for (const svc of services) {
+    const hostnames = svc.all_hostnames?.length ? svc.all_hostnames : (svc.hostname ? [svc.hostname] : [])
+    for (const h of hostnames) {
+      rows.push({
+        module: svc.module,
+        name: svc.name,
+        subdomain: svc.subdomain,
+        port: svc.port,
+        hostname: h,
+        // 提取该 hostname 对应的域名
+        domain: hostnames.length > 1 ? h.split('.').slice(1).join('.') : '',
+        published: routeHostnames.has(h),
+      })
+    }
+  }
+  return rows
+})
+
+// 按服务分组的数据（每个服务一行）
+const groupedServices = computed(() => {
+  const services = tunnelStatus.value?.services || []
+  const routeHostnames = new Set((tunnelStatus.value?.routes || []).map(r => r.hostname))
+  return services.map(svc => {
+    const allHostnames = svc.all_hostnames?.length ? svc.all_hostnames : (svc.hostname ? [svc.hostname] : [])
+    const hostnameDetails = allHostnames.map(h => ({
+      hostname: h,
+      domain: allHostnames.length > 1 ? h.split('.').slice(1).join('.') : '',
+      published: routeHostnames.has(h),
+    }))
+    const publishedCount = hostnameDetails.filter(h => h.published).length
+    const allPublished = hostnameDetails.length > 0 && publishedCount === hostnameDetails.length
+    const nonePublished = publishedCount === 0
+    return {
+      module: svc.module,
+      name: svc.name,
+      subdomain: svc.subdomain,
+      port: svc.port,
+      hostnames: hostnameDetails,
+      allPublished,
+      nonePublished,
+      partialPublished: !allPublished && !nonePublished,
+    }
+  })
+})
+
+const loadDomains = async () => {
+  try {
+    const res = await api.get('/config/domains')
+    domains.value = res.data.domains || []
+    if (tunnelDomains.value.length > 0 && !selectedTunnelDomain.value) {
+      selectedTunnelDomain.value = tunnelDomains.value[0].domain
+    }
+  } catch (e) {
+    console.error('加载域名失败:', e)
+  }
+}
+
+const verifyDomain = async (domain) => {
+  const d = domains.value.find(x => x.domain === domain)
+  if (d) d.verifying = true
+  try {
+    const res = await api.post(`/config/domains/${domain}/verify`)
+    const result = res.data
+    if (d) {
+      d.status = result.status
+      d.checks = result.checks
+      d.errors = result.errors
+    }
+    if (result.status === 'active') {
+      ElMessage.success(`${domain} 验证通过`)
+    } else {
+      ElMessage.warning(`${domain} 验证发现问题：${result.errors.join('; ')}`)
+    }
+  } catch (e) {
+    ElMessage.error('验证失败: ' + (e.response?.data?.detail || '未知错误'))
+  } finally {
+    if (d) d.verifying = false
+  }
+}
+
+const addDomain = async () => {
+  addingDomain.value = true
+  try {
+    const res = await api.post('/config/domains', newDomainForm.value)
+    const verify = res.data.verify
+    if (verify && verify.status === 'active') {
+      ElMessage.success(`域名 ${newDomainForm.value.domain} 添加成功，验证通过！`)
+    } else if (verify) {
+      ElMessage.warning(`域名已添加，但验证发现问题：${verify.errors?.join('; ') || '请手动验证'}`)
+    } else {
+      ElMessage.success('域名添加成功')
+    }
+    showAddDomain.value = false
+    newDomainForm.value = { domain: '', dns_provider: 'cloudflare', purpose: 'tunnel' }
+    await loadDomains()
+  } catch (e) {
+    ElMessage.error('添加失败: ' + (e.response?.data?.detail || '未知错误'))
+  } finally {
+    addingDomain.value = false
+  }
+}
+
+const dnsProviderLabel = (provider) => {
+  const map = { aliyun: '阿里云', cloudflare: 'Cloudflare', dnspod: 'DNSPod' }
+  return map[provider] || provider
+}
+const purposeLabel = (purpose) => {
+  const map = { nginx: '域名反代', tunnel: 'Tunnel 中转', both: '反代 + Tunnel' }
+  return map[purpose] || purpose
+}
+
 // ===== 智能推荐 =====
 const selectedScheme = ref('tunnel')
 const detectInfo = ref('')
@@ -550,7 +756,6 @@ const showDomainSetup = ref(false)
 // ===== Tunnel 状态 =====
 const tunnelStatus = ref({ configured: false, connected: false, routes: [], services: [] })
 const tunnelLoading = ref(false)
-const publishTab = ref('published')
 const publishingId = ref('')
 const reconnectToken = ref('')
 const reconnecting = ref(false)
@@ -640,7 +845,6 @@ const loadConfig = async () => {
     const cfg = data.config || {}
     const env = data.env_summary || {}
     domain.value = env.DOMAIN || cfg.domain || ''
-    domainInput.value = domain.value
     sslEmailInput.value = cfg.ssl_email || ''
     // hybrid 模式作为「智能混合路由」正常展示，不再归一化
     const rawMode = env.ACCESS_MODE || cfg.access_mode || 'domain'
@@ -674,6 +878,12 @@ const loadConfig = async () => {
     const ssl = data.ssl_status || {}
     sslValid.value = !!ssl.ssl_valid
     sslExpiry.value = ssl.ssl_expiry || ''
+
+    // 多域名列表（直接从 config 响应中提取，避免额外 API 调用）
+    domains.value = data.domains || []
+    if (tunnelDomains.value.length > 0 && !selectedTunnelDomain.value) {
+      selectedTunnelDomain.value = tunnelDomains.value[0].domain
+    }
   } catch (e) {
     ElMessage.error('加载配置失败')
   }
@@ -789,10 +999,23 @@ const handleReconnect = async () => {
 }
 
 const publishService = async (row) => {
-  publishingId.value = row.module
+  // row 已经包含具体的 hostname 和 domain
+  const targetDomain = row.domain || selectedTunnelDomain.value || tunnelDomains.value[0]?.domain || ''
+  const accessUrl = `https://${row.hostname}`
+  try {
+    await ElMessageBox.confirm(
+      `即将发布服务：\n\n服务：${row.name}\n目标域名：${targetDomain}\n访问地址：${accessUrl}\n\n确认发布？`,
+      '确认发布服务',
+      { confirmButtonText: '确认发布', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+  publishingId.value = row.module + row.hostname
   try {
     const { data } = await api.post('/cloudflare/publish', {
-      subdomain: row.subdomain, port: row.port
+      subdomain: row.subdomain, port: row.port,
+      domain: targetDomain
     })
     ElMessage.success(data.message || '发布成功')
     if (data.dns_warning) ElMessage.warning(data.dns_warning)
@@ -813,6 +1036,48 @@ const unpublishRoute = async (hostname) => {
   } catch (e) {
     ElMessage.error('操作失败: ' + (e.response?.data?.detail || e.message))
   }
+}
+
+// 取消发布服务的所有 hostname
+const unpublishAllHostnames = async (row) => {
+  const hostnames = row.hostnames.filter(h => h.published).map(h => h.hostname)
+  try {
+    await ElMessageBox.confirm(
+      `确定取消发布以下地址？\n\n${hostnames.join('\n')}`,
+      '确认操作'
+    )
+  } catch { return }
+  publishingId.value = 'unpublish-' + row.module
+  try {
+    for (const hostname of hostnames) {
+      const { data } = await api.post('/cloudflare/unpublish', { hostname })
+      if (data.warnings?.length) data.warnings.forEach(w => ElMessage.warning(w))
+    }
+    ElMessage.success(`已取消发布 ${hostnames.length} 个地址`)
+    loadTunnelStatus()
+  } catch (e) {
+    ElMessage.error('操作失败: ' + (e.response?.data?.detail || e.message))
+  }
+  publishingId.value = ''
+}
+
+// 发布服务的第一个未发布的 hostname（或全部未发布时发布第一个）
+const publishFirstAvailable = async (row) => {
+  // 找到第一个未发布的 hostname
+  const unpublished = row.hostnames.find(h => !h.published)
+  if (!unpublished) {
+    ElMessage.info('所有地址均已发布')
+    return
+  }
+  const targetRow = {
+    module: row.module,
+    name: row.name,
+    subdomain: row.subdomain,
+    port: row.port,
+    hostname: unpublished.hostname,
+    domain: unpublished.domain,
+  }
+  await publishService(targetRow)
 }
 
 // ===== 混合路由：按服务切换路由方式 =====
@@ -837,7 +1102,7 @@ const switchServiceRoute = async (row) => {
       ElMessage.success(`${row.name} 已切换为域名反代`)
       if (data.warnings?.length) data.warnings.forEach(w => ElMessage.warning(w))
     } else {
-      const { data } = await api.post('/cloudflare/publish', { subdomain: row.subdomain, port: row.port })
+      const { data } = await api.post('/cloudflare/publish', { subdomain: row.subdomain, port: row.port, ...(selectedTunnelDomain.value ? { domain: selectedTunnelDomain.value } : {}) })
       ElMessage.success(`${row.name} 已切换为 Tunnel 中转`)
       if (data.dns_warning) ElMessage.warning(data.dns_warning)
     }
@@ -872,7 +1137,7 @@ const applySmartRouting = async () => {
   let okCount = 0
   for (const s of toTunnel) {
     try {
-      const { data } = await api.post('/cloudflare/publish', { subdomain: s.subdomain, port: s.port })
+      const { data } = await api.post('/cloudflare/publish', { subdomain: s.subdomain, port: s.port, ...(selectedTunnelDomain.value ? { domain: selectedTunnelDomain.value } : {}) })
       okCount++
       if (data.dns_warning) ElMessage.warning(`${s.name}: ${data.dns_warning}`)
     } catch (e) {
@@ -992,30 +1257,12 @@ const checkSSL = async () => {
   sslChecking.value = false
 }
 
-// ===== 域名保存 =====
+// ===== SSL 邮箱保存 =====
 const saveDomain = async () => {
-  const oldDomain = domain.value
-  const newDomain = domainInput.value.trim()
-  if (!newDomain) { ElMessage.warning('域名不能为空'); return }
-
-  if (oldDomain && oldDomain !== newDomain && isConfigured.value) {
-    try {
-      await ElMessageBox.confirm(
-        `域名将从 ${oldDomain} 变更为 ${newDomain}。\n\n以下配置需要手动更新：\n• Tunnel 已发布路由（需重新发布）\n• DNS 记录\n• Nginx 反代配置（需重新生成）\n• SSL 证书（需重新签发）\n\n确定要继续吗？`,
-        '域名变更确认',
-        { confirmButtonText: '继续变更', cancelButtonText: '取消', type: 'warning' }
-      )
-    } catch { return }
-  }
-
   savingDomainInfo.value = true
   try {
-    await api.put('/config', { domain: newDomain, ssl_email: sslEmailInput.value })
-    domain.value = newDomain
-    ElMessage.success('域名已保存')
-    if (oldDomain && oldDomain !== newDomain) {
-      ElMessage.info('请重新配置网络访问相关设置')
-    }
+    await api.put('/config', { ssl_email: sslEmailInput.value })
+    ElMessage.success('SSL 邮箱已保存')
     loadConfig()
   } catch (e) {
     ElMessage.error('保存失败: ' + (e.response?.data?.detail || e.message))
@@ -1119,4 +1366,25 @@ onMounted(async () => {
 .advanced-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
 .advanced-desc { font-size: 13px; color: #909399; margin-bottom: 8px; line-height: 1.5; }
 .advanced-desc code { background: #f0f2f5; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+
+.domain-item { padding: 2px 0; }
+.domain-item-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.domain-item-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.domain-item-meta { font-size: 12px; color: #909399; }
+.domain-empty { text-align: center; padding: 16px 0; color: #c0c4cc; font-size: 14px; }
+.domain-selector-bar { display: flex; align-items: center; margin-bottom: 12px; }
+.domain-selector-label { font-size: 13px; color: #909399; white-space: nowrap; margin-right: 8px; }
+
+.domain-verify-detail {
+  margin-top: 8px; padding: 8px 12px; background: #f5f7fa; border-radius: 6px;
+  font-size: 13px; line-height: 1.6;
+}
+.verify-check-item { display: flex; align-items: center; gap: 4px; }
+.verify-errors { margin-top: 6px; }
+.verify-error-item { color: #f56c6c; font-size: 12px; line-height: 1.6; }
+.text-green { color: #67c23a; }
+.text-red { color: #f56c6c; }
+.text-blue { color: #409eff; }
+.ml-1 { margin-left: 4px; }
+.underline { text-decoration: underline; }
 </style>
