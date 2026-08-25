@@ -3,12 +3,15 @@ EasyServer Docker Manager
 """
 import asyncio
 import json
+import logging
 import re
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class DockerManager:
@@ -136,13 +139,27 @@ class DockerManager:
         rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600)
         return {"module": module_id, "action": "start", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
 
-    async def async_pull_module(self, module_id: str) -> tuple:
+    async def async_pull_module(self, module_id: str, max_retries: int = 3) -> tuple:
         """拉取模块镜像，返回 (returncode, stdout, stderr)
 
         与启动分离：pull 失败说明是镜像/网络问题，可精确定位诊断。
         大镜像拉取耗时长，超时设为 10 分钟。
+        网络波动时自动指数退避重试（最多 max_retries 次）。
         """
-        return await self._async_run_compose(module_id, "pull", check=False, timeout=600)
+        base_delay = 2
+        for attempt in range(max_retries):
+            rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600)
+            if rc == 0:
+                return rc, stdout, stderr
+            # 最后一次尝试直接返回，不再等待
+            if attempt == max_retries - 1:
+                logger.warning(f"Image pull failed for {module_id} after {max_retries} attempts")
+                return rc, stdout, stderr
+            delay = base_delay * (2 ** attempt)
+            logger.warning(f"Image pull failed for {module_id} (attempt {attempt + 1}/{max_retries}), retrying in {delay}s: {stderr[:200]}")
+            await asyncio.sleep(delay)
+        # unreachable, but satisfy type checker
+        return rc, stdout, stderr
 
     async def async_stop_module(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "down")

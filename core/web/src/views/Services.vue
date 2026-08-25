@@ -54,40 +54,35 @@
             <el-button size="small" type="danger" @click="doAction(svc.id, 'stop')" :disabled="svc.status !== 'running'">停止</el-button>
             <el-button size="small" type="warning" @click="doAction(svc.id, 'restart')">重启</el-button>
             <el-button size="small" type="primary" @click="doAction(svc.id, 'update')">更新</el-button>
-            <el-button size="small" @click="showLogs(svc)">日志</el-button>
+            <el-button size="small" @click="showLogs(svc)">
+              <el-icon><Document /></el-icon> 日志
+            </el-button>
           </div>
         </el-card>
       </el-col>
     </el-row>
 
-    <!-- 日志弹窗 -->
-    <el-dialog v-model="logVisible" :title="logTitle + ' - 日志'" :width="isMobile ? '95%' : '700px'" top="5vh">
-      <pre class="log-content">{{ logContent }}</pre>
-      <template #footer>
-        <el-button @click="logVisible = false">关闭</el-button>
-        <el-button type="primary" @click="refreshLogs">刷新</el-button>
-      </template>
-    </el-dialog>
+    <!-- 日志查看器 -->
+    <LogViewer
+      :module-id="logModuleId"
+      :module-name="logTitle"
+      v-model:visible="logVisible"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Edit, Refresh } from '@element-plus/icons-vue'
+import { Edit, Refresh, Document } from '@element-plus/icons-vue'
+import LogViewer from '@/components/LogViewer.vue'
 import api from '../api'
-
-const isMobile = ref(false)
-const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
-onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
-onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
 
 const services = ref([])
 const loading = ref(false)
 const logVisible = ref(false)
 const logTitle = ref('')
-const logContent = ref('')
-const currentLogSvc = ref('')
+const logModuleId = ref('')
 const portConflicts = ref([])
 const portCheckDone = ref(false)
 const domain = ref('')
@@ -207,18 +202,10 @@ const doAction = async (id, action) => {
   } catch (e) { ElMessage.error(`操作失败: ${e.response?.data?.detail || e.message}`) }
 }
 
-const showLogs = async (svc) => {
-  currentLogSvc.value = svc.id
+const showLogs = (svc) => {
+  logModuleId.value = svc.id
   logTitle.value = svc.name
   logVisible.value = true
-  await refreshLogs()
-}
-
-const refreshLogs = async () => {
-  try {
-    const { data } = await api.get(`/services/${currentLogSvc.value}/logs`, { params: { lines: 100 } })
-    logContent.value = data.logs || '暂无日志'
-  } catch (e) { logContent.value = '获取日志失败' }
 }
 
 onMounted(async () => {
@@ -233,7 +220,6 @@ onMounted(async () => {
 .svc-info { margin-bottom: 12px; font-size: 13px; line-height: 1.8; }
 .svc-desc { color: #666; margin-bottom: 4px; font-size: 12px; }
 .svc-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.log-content { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 6px; max-height: 400px; overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
 .port-row { display: flex; align-items: center; gap: 4px; }
 .port-tag { cursor: pointer; }
 .port-tag:hover { color: var(--el-color-primary); }

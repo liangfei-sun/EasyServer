@@ -3,7 +3,7 @@
 
 services:
   acme.sh:
-    image: neilpang/acme.sh
+    image: neilpang/acme.sh:v3.0.9
     container_name: easyserver-acme
     command: daemon
     volumes:
@@ -20,6 +20,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options:

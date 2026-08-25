@@ -65,14 +65,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu } from '@element-plus/icons-vue'
+import { Menu, Monitor, Setting, Connection, ShoppingCart, FolderOpened, Tools, Document } from '@element-plus/icons-vue'
+import { useMobile } from '@/composables/useMobile'
 import api from './api'
 
 const route = useRoute()
 const router = useRouter()
-const isMobile = ref(false)
+const { isMobile } = useMobile()
 const sidebarOpen = ref(false)
 const setupCompleted = ref(null) // null = 未检测, true/false
 const isLoggedIn = ref(false)
@@ -81,10 +82,10 @@ const isLoggedIn = ref(false)
 const fullScreenPages = ['/setup', '/login']
 const showLayout = computed(() => !fullScreenPages.includes(route.path))
 
-const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768
-  if (!isMobile.value) sidebarOpen.value = false
-}
+// 桌面端自动关闭侧边栏
+watch(isMobile, (val) => {
+  if (!val) sidebarOpen.value = false
+})
 
 // 检测 setup 和 auth 状态
 const checkAuth = async () => {
@@ -112,13 +113,7 @@ const checkAuth = async () => {
 }
 
 onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
   checkAuth()
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

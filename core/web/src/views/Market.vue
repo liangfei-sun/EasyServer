@@ -128,12 +128,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Loading } from '@element-plus/icons-vue'
+import { useMobile } from '@/composables/useMobile'
 import api from '../api'
 
-const isMobile = ref(false)
-const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
-onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
-onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
+const { isMobile } = useMobile()
 
 const modules = ref([])
 const activeCategory = ref('infra')

@@ -5,30 +5,15 @@ EasyServer Services API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from ..core.docker_manager import DockerManager
-from ..core.module_loader import ModuleLoader
-from ..core.config_manager import ConfigManager
-import os
+from ..core.deps import PROJECT_ROOT, get_config_manager, get_docker_manager, get_module_loader
 import re
 import asyncio
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/services", tags=["services"])
-
-# 项目根目录（容器内为 /app，开发时为环境变量指定）
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
-
-
-def _get_docker_manager():
-    return DockerManager(PROJECT_ROOT)
-
-
-def _get_module_loader():
-    return ModuleLoader(PROJECT_ROOT)
-
-
-def _get_config_manager():
-    return ConfigManager(PROJECT_ROOT)
 
 
 class ServiceStatus(BaseModel):
@@ -41,7 +26,7 @@ class ServiceStatus(BaseModel):
 @router.get("/port-check")
 async def port_check():
     """检查所有已安装模块的端口冲突情况"""
-    ml = _get_module_loader()
+    ml = get_module_loader()
     installed = ml.get_installed_modules()
 
     # 收集所有模块端口
@@ -93,8 +78,8 @@ async def update_service_port(module_id: str, port: int):
     if port < 1 or port > 65535:
         raise HTTPException(status_code=400, detail="端口号必须在 1-65535 之间")
 
-    ml = _get_module_loader()
-    cm = _get_config_manager()
+    ml = get_module_loader()
+    cm = get_config_manager()
     module = ml.get_module_by_id(module_id)
     if not module:
         raise HTTPException(status_code=404, detail=f"模块 {module_id} 不存在")
@@ -136,9 +121,9 @@ async def update_service_port(module_id: str, port: int):
         ng = NginxGenerator(PROJECT_ROOT)
         installed_modules = ml.get_installed_modules()
         ng.generate_all(cm.load_config(), installed_modules)
-        ng.reload_nginx()
-    except Exception:
-        pass
+        await ng.async_reload_nginx()
+    except Exception as e:
+        logger.warning(f"Failed to update Nginx config after port change: {e}")
 
     return {"success": True, "module": module_id, "port": port, "env_key": port_key,
             "message": f"已将 {port_key} 更新为 {port}，请重启服务使其生效"}
@@ -167,12 +152,9 @@ async def _async_fetch_all_containers() -> list:
 
 async def _async_get_all_status() -> list:
     """异步获取所有已安装服务的状态，基于 config.yaml 中的 installed_modules 列表"""
-    from ..core.docker_manager import DockerManager
-    from ..core.module_loader import ModuleLoader
-    from ..core.config_manager import ConfigManager
-    dm = _get_docker_manager()
-    loader = _get_module_loader()
-    cm = _get_config_manager()
+    dm = get_docker_manager()
+    loader = get_module_loader()
+    cm = get_config_manager()
 
     # 从 config.yaml 获取用户实际安装的模块 ID
     installed_ids = cm.get_installed_modules()
@@ -238,8 +220,8 @@ async def list_services():
 @router.get("/{module_id}")
 async def get_service(module_id: str):
     """获取单个服务的状态（异步）"""
-    dm = _get_docker_manager()
-    ml = _get_module_loader()
+    dm = get_docker_manager()
+    ml = get_module_loader()
 
     module = ml.get_module_by_id(module_id)
     if not module:
@@ -256,7 +238,7 @@ async def get_service(module_id: str):
 @router.post("/{module_id}/start")
 async def start_service(module_id: str):
     """启动指定服务（异步）"""
-    dm = _get_docker_manager()
+    dm = get_docker_manager()
     try:
         return await dm.async_start_module(module_id)
     except FileNotFoundError as e:
@@ -268,7 +250,7 @@ async def start_service(module_id: str):
 @router.post("/{module_id}/stop")
 async def stop_service(module_id: str):
     """停止指定服务（异步）"""
-    dm = _get_docker_manager()
+    dm = get_docker_manager()
     try:
         return await dm.async_stop_module(module_id)
     except FileNotFoundError as e:
@@ -280,7 +262,7 @@ async def stop_service(module_id: str):
 @router.post("/{module_id}/restart")
 async def restart_service(module_id: str):
     """重启指定服务（异步）"""
-    dm = _get_docker_manager()
+    dm = get_docker_manager()
     try:
         return await dm.async_restart_module(module_id)
     except FileNotFoundError as e:
@@ -292,7 +274,7 @@ async def restart_service(module_id: str):
 @router.post("/{module_id}/update")
 async def update_service(module_id: str):
     """更新指定服务（拉取最新镜像并重建，异步）"""
-    dm = _get_docker_manager()
+    dm = get_docker_manager()
     try:
         return await dm.async_update_module(module_id)
     except FileNotFoundError as e:
@@ -304,7 +286,7 @@ async def update_service(module_id: str):
 @router.get("/{module_id}/logs")
 async def get_service_logs(module_id: str, lines: int = 100):
     """获取服务日志（异步）"""
-    dm = _get_docker_manager()
+    dm = get_docker_manager()
     try:
         logs = await dm.async_get_module_logs(module_id, lines)
         return {"module": module_id, "logs": logs}

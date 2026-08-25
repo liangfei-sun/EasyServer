@@ -10,10 +10,13 @@ from ..core.config_manager import ConfigManager
 from ..core.docker_manager import DockerManager
 from ..core.nginx_generator import NginxGenerator
 import asyncio
+import logging
 import os
 import shutil
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/modules", tags=["modules"])
 
@@ -110,7 +113,7 @@ async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager
         task["stage"] = ""
         task["log"].append("安装完成")
         # 更新 Nginx 配置（失败不影响主流程）
-        _update_nginx_config(cm, ml)
+        await _update_nginx_config(cm, ml)
     except _InstallError as e:
         cm.remove_installed_module(module_id)  # 回滚安装状态
         task["status"] = TASK_FAILED
@@ -299,7 +302,7 @@ async def uninstall_module(module_id: str, request: UninstallRequest):
     cm.remove_installed_module(module_id)
 
     # 更新 Nginx 配置
-    _update_nginx_config(cm, ml)
+    nginx_warning = await _update_nginx_config(cm, ml)
 
     result = {
         "success": True,
@@ -307,8 +310,13 @@ async def uninstall_module(module_id: str, request: UninstallRequest):
         "data_removed": request.remove_data,
         "removed_paths": removed_paths,
     }
+    warnings = []
     if remove_error:
-        result["warning"] = f"模块已卸载，但停止容器/删除镜像时出错: {remove_error}"
+        warnings.append(f"模块已卸载，但停止容器/删除镜像时出错: {remove_error}")
+    if nginx_warning:
+        warnings.append(nginx_warning)
+    if warnings:
+        result["warnings"] = warnings
     return result
 
 
@@ -336,8 +344,8 @@ async def validate_module(module_id: str):
     return ml.validate_module(module_id)
 
 
-def _update_nginx_config(cm: ConfigManager, ml: ModuleLoader):
-    """更新 Nginx 配置"""
+async def _update_nginx_config(cm: ConfigManager, ml: ModuleLoader) -> str | None:
+    """更新 Nginx 配置，失败时返回警告信息"""
     try:
         config = cm.load_config()
         installed_ids = cm.get_installed_modules()
@@ -349,6 +357,8 @@ def _update_nginx_config(cm: ConfigManager, ml: ModuleLoader):
 
         ng = NginxGenerator(PROJECT_ROOT)
         ng.generate_all(config, installed_modules)
-        ng.reload_nginx()
-    except Exception:
-        pass  # Nginx 更新失败不影响主流程
+        await ng.async_reload_nginx()
+    except Exception as e:
+        logger.warning(f"Failed to update Nginx config after module operation: {e}")
+        return f"Nginx 配置更新失败（不影响当前操作）: {e}"
+    return None

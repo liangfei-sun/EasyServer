@@ -1,9 +1,14 @@
 """
 EasyServer Config Manager
 """
+import os
 import yaml
 import secrets
 import shutil
+import hashlib
+import hmac
+import tempfile
+import bcrypt
 from pathlib import Path
 from typing import Any, Optional
 from dotenv import dotenv_values, set_key
@@ -15,6 +20,11 @@ class ConfigManager:
         self.data_dir = self.project_root / "data"
         self.config_file = self.data_dir / "config.yaml"
         self.env_file = self.project_root / ".env"
+        # 内存缓存
+        self._config_cache: Optional[dict] = None
+        self._config_mtime: float = 0
+        self._env_cache: Optional[dict] = None
+        self._env_mtime: float = 0
 
     def _ensure_dirs(self):
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -24,6 +34,13 @@ class ConfigManager:
             default = self._default_config()
             self.save_config(default)
             return default
+        # 基于 mtime 的缓存
+        try:
+            mtime = os.path.getmtime(str(self.config_file))
+        except OSError:
+            mtime = 0
+        if self._config_cache is not None and mtime == self._config_mtime:
+            return self._config_cache
         with open(self.config_file, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         if not config or not isinstance(config, dict):
@@ -33,12 +50,28 @@ class ConfigManager:
         for key, value in default.items():
             if key not in config:
                 config[key] = value
+        self._config_cache = config
+        self._config_mtime = mtime
         return config
 
     def save_config(self, config: dict):
         self._ensure_dirs()
-        with open(self.config_file, "w", encoding="utf-8") as f:
-            yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        # 原子写入：先写临时文件，再原子替换
+        dir_name = os.path.dirname(str(self.config_file))
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+            os.replace(tmp_path, str(self.config_file))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        # 清除缓存
+        self._config_cache = None
+        self._config_mtime = 0
 
     def get_config_value(self, key: str, default: Any = None) -> Any:
         config = self.load_config()
@@ -85,7 +118,17 @@ class ConfigManager:
     def load_env(self) -> dict:
         if not self.env_file.exists():
             return {}
-        return dict(dotenv_values(str(self.env_file)))
+        # 基于 mtime 的缓存
+        try:
+            mtime = os.path.getmtime(str(self.env_file))
+        except OSError:
+            mtime = 0
+        if self._env_cache is not None and mtime == self._env_mtime:
+            return self._env_cache
+        env = dict(dotenv_values(str(self.env_file)))
+        self._env_cache = env
+        self._env_mtime = mtime
+        return env
 
     def set_env_value(self, key: str, value: str):
         if not self.env_file.exists():
@@ -95,6 +138,9 @@ class ConfigManager:
             else:
                 self.env_file.touch()
         set_key(str(self.env_file), key, value)
+        # 清除缓存
+        self._env_cache = None
+        self._env_mtime = 0
 
     def get_env_value(self, key: str, default: str = "") -> str:
         return self.load_env().get(key, default)
@@ -103,6 +149,18 @@ class ConfigManager:
         return self.get_config_value("setup_completed", False)
 
     def mark_setup_completed(self):
+        # 持久化 JWT_SECRET：确保重启后 Token 依然有效
+        env = self.load_env()
+        if not env.get("JWT_SECRET"):
+            jwt_secret = secrets.token_hex(32)
+            self.set_env_value("JWT_SECRET", jwt_secret)
+            # 同步更新当前进程环境变量及 auth 模块密钥
+            os.environ["JWT_SECRET"] = jwt_secret
+            try:
+                from . import auth as _auth
+                _auth.JWT_SECRET = jwt_secret
+            except Exception:
+                pass
         self.set_config_value("setup_completed", True)
 
     def is_network_configured(self) -> bool:
@@ -111,18 +169,32 @@ class ConfigManager:
     def mark_network_configured(self):
         self.set_config_value("network_configured", True)
 
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """使用 bcrypt 生成密码哈希字符串"""
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
     def verify_password(self, password: str) -> bool:
-        """验证管理密码"""
+        """验证管理密码（双模式：优先 bcrypt，回退 SHA256 并自动迁移）"""
         stored_hash = self.get_config_value("admin_password_hash", "")
         if not stored_hash:
             return False
-        import hashlib
-        return hashlib.sha256(password.encode()).hexdigest() == stored_hash
+        # 优先尝试 bcrypt 验证
+        try:
+            if bcrypt.checkpw(password.encode(), stored_hash.encode()):
+                return True
+        except (ValueError, TypeError):
+            pass
+        # 回退到旧 SHA256 验证
+        if hmac.compare_digest(hashlib.sha256(password.encode()).hexdigest(), stored_hash):
+            # 自动迁移为 bcrypt 哈希
+            self.set_admin_password(password)
+            return True
+        return False
 
     def set_admin_password(self, password: str):
-        """设置管理密码（存储 SHA256 哈希）"""
-        import hashlib
-        self.set_config_value("admin_password_hash", hashlib.sha256(password.encode()).hexdigest())
+        """设置管理密码（存储 bcrypt 哈希）"""
+        self.set_config_value("admin_password_hash", self.hash_password(password))
 
     def get_installed_modules(self) -> list:
         return self.get_config_value("installed_modules", [])

@@ -2,6 +2,7 @@
 
 services:
   notediscovery:
+    # 该镜像未提供语义化版本标签，暂使用 latest；建议关注上游发布锁定具体版本
     image: ghcr.io/gamosoft/notediscovery:latest
     container_name: easyserver-notediscovery
     ports:

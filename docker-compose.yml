@@ -8,6 +8,12 @@ services:
       dockerfile: Dockerfile
     container_name: easyserver-core
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:8900:8000"
     volumes:
@@ -20,6 +26,8 @@ services:
       - EASYSERVER_ROOT=/app
       - DATA_DIR=${DATA_DIR:-/app/data}
       - TZ=Asia/Shanghai
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: json-file
       options:

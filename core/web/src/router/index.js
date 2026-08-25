@@ -1,13 +1,14 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import Dashboard from '../views/Dashboard.vue'
-import Services from '../views/Services.vue'
-import Market from '../views/Market.vue'
-import Settings from '../views/Settings.vue'
-import SetupWizard from '../views/SetupWizard.vue'
-import Login from '../views/Login.vue'
-import NetworkConfig from '../views/NetworkConfig.vue'
-import Backup from '../views/Backup.vue'
-import Docs from '../views/Docs.vue'
+
+const Dashboard = () => import('../views/Dashboard.vue')
+const Services = () => import('../views/Services.vue')
+const Market = () => import('../views/Market.vue')
+const Settings = () => import('../views/Settings.vue')
+const SetupWizard = () => import('../views/SetupWizard.vue')
+const Login = () => import('../views/Login.vue')
+const NetworkConfig = () => import('../views/NetworkConfig.vue')
+const Backup = () => import('../views/Backup.vue')
+const Docs = () => import('../views/Docs.vue')
 
 const routes = [
   { path: '/', redirect: '/dashboard' },

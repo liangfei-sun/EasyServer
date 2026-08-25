@@ -19,20 +19,11 @@ echo "✅ 本地备份完成"
 echo "清理 ${BACKUP_RETAIN_DAYS} 天前的快照..."
 restic forget --keep-within "${BACKUP_RETAIN_DAYS}d" --prune 2>/dev/null || echo "⚠ 清理跳过"
 
-# 云端同步
+# 云端同步（当前未支持，需要额外安装 ossutil/rclone）
 case "$BACKUP_CLOUD_PROVIDER" in
-    aliyun-oss)
-        if [ -n "$BACKUP_CLOUD_BUCKET" ] && [ -n "$BACKUP_CLOUD_KEY" ]; then
-            echo "同步到阿里云 OSS: $BACKUP_CLOUD_BUCKET"
-            # 使用 ossutil 或 rclone 同步（需额外安装）
-            which ossutil64 >/dev/null 2>&1 && \
-                ossutil64 cp -r /backups/restic-repo "oss://$BACKUP_CLOUD_BUCKET/easyserver-backup/" \
-                -i "$BACKUP_CLOUD_KEY" -k "$BACKUP_CLOUD_SECRET" -e "oss-cn-hangzhou.aliyuncs.com" || \
-                echo "⚠ ossutil 未安装，云端同步跳过"
-        fi
-        ;;
-    baidu-netdisk)
-        echo "⚠ 百度网盘同步需要额外配置 BaiduPCS-Go"
+    aliyun-oss|baidu-netdisk)
+        echo "⚠ 云端备份（$BACKUP_CLOUD_PROVIDER）暂未集成，仅保留本地备份"
+        echo "  如需云端备份，请手动配置 rclone 或 ossutil 后修改此脚本"
         ;;
     none|"")
         echo "云端存储未配置，仅保留本地备份"

@@ -9,18 +9,17 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - RESTIC_REPOSITORY=/backups/restic-repo
-      - RESTIC_PASSWORD=${BACKUP_PASSWORD:-easyserver-backup-2024}
+      - RESTIC_PASSWORD=${BACKUP_PASSWORD:?BACKUP_PASSWORD must be set}
       - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
       - BACKUP_RETAIN_DAYS=${BACKUP_RETAIN_DAYS:-7}
       - BACKUP_CLOUD_PROVIDER=${BACKUP_CLOUD_PROVIDER:-none}
-      - BACKUP_CLOUD_BUCKET=${BACKUP_CLOUD_BUCKET:-}
-      - BACKUP_CLOUD_KEY=${BACKUP_CLOUD_KEY:-}
-      - BACKUP_CLOUD_SECRET=${BACKUP_CLOUD_SECRET:-}
     volumes:
       - ${DATA_DIR}:/data:ro
       - ${DATA_DIR}/backups:/backups
       - ${PROJECT_ROOT:-/home/lf/easyserver}/.env:/config/.env:ro
       - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/backup/scripts:/scripts:ro
+    security_opt:
+      - no-new-privileges:true
     networks:
       - easyserver-proxy
     logging:

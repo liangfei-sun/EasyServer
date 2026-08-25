@@ -6,18 +6,17 @@ from fastapi import APIRouter, HTTPException
 from ..core.config_manager import ConfigManager
 from ..core.module_loader import ModuleLoader
 from ..core.nginx_generator import NginxGenerator
+from ..core.deps import PROJECT_ROOT, get_config_manager, get_module_loader
 import os
 
 router = APIRouter(prefix="/api/nginx", tags=["nginx"])
-
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
 
 
 @router.post("/generate")
 async def generate_nginx_config():
     """根据当前配置重新生成 Nginx 配置"""
-    cm = ConfigManager(PROJECT_ROOT)
-    ml = ModuleLoader(PROJECT_ROOT)
+    cm = get_config_manager()
+    ml = get_module_loader()
     ng = NginxGenerator(PROJECT_ROOT)
 
     config = cm.load_config()
@@ -40,7 +39,7 @@ async def generate_nginx_config():
 async def reload_nginx():
     """重载 Nginx"""
     ng = NginxGenerator(PROJECT_ROOT)
-    success = ng.reload_nginx()
+    success = await ng.async_reload_nginx()
     if success:
         return {"success": True, "message": "Nginx 已重载"}
     else:

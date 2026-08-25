@@ -2,7 +2,7 @@
 
 services:
   calibre-web:
-    image: linuxserver/calibre-web:latest
+    image: linuxserver/calibre-web:0.6.24-r0-ls316
     container_name: easyserver-calibre-web
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${CALIBRE_WEB_PORT:-8083}:8083"

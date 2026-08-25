@@ -1,6 +1,6 @@
 # EasyServer
 
-> 当前版本：v0.1.0
+> 当前版本：v0.3.0
 
 个人服务器一站式部署方案 —— 模块化、可视化管理、一键安装。
 
@@ -73,8 +73,14 @@ easyserver/
 │   ├── install.sh              # 一键安装脚本
 │   └── manage.sh               # CLI 管理工具
 ├── core/
-│   ├── api/                    # FastAPI 后端
-│   ├── web/                    # Vue 3 前端
+│   ├── api/
+│   │   ├── routes/             # API 路由（config / network / domains / modules / services 等）
+│   │   └── core/               # 核心逻辑（config_manager / docker_manager / auth / deps / nginx_utils 等）
+│   ├── web/
+│   │   └── src/
+│   │       ├── views/          # 页面组件（含 network/ 子组件）
+│   │       ├── composables/    # 组合式函数（useMobile）
+│   │       └── router/         # 路由配置
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── modules/                    # 服务模块
@@ -102,7 +108,16 @@ easyserver/
 
 ## 访问模式
 
-### 域名反代模式 (推荐)
+### 智能混合路由模式 (推荐)
+域名反代与 Tunnel 中转并存，按服务粒度自由选择路由方式：
+- **域名反代**：DNS AAAA → 服务器 IPv6 → Nginx SSL，适合 IPv6 出口稳定的服务
+- **Tunnel 中转**：DNS CNAME → Cloudflare 边缘 → Tunnel，免端口、不依赖公网出口
+- 支持多域名管理，每个域名独立 DNS 提供商
+- 支持逐服务切换路由方式、智能推荐一键配置、DNS 记录自动同步与冲突保护
+
+详见 [网络配置指南](docs/network-config.md)。
+
+### 域名反代模式
 所有服务通过 Nginx 反向代理访问，自动配置 SSL 证书。
 - `https://notes.example.com` → Joplin
 - `https://media.example.com` → Jellyfin
@@ -110,14 +125,6 @@ easyserver/
 ### IPv6 直连模式
 服务端口直接暴露在公网，适合无域名的场景。
 - `http://[240e:xxx:xxx]:8081` → FileBrowser
-
-### 智能混合路由模式 (推荐)
-域名反代与 Tunnel 中转并存，按服务粒度自由选择路由方式：
-- **域名反代**：DNS AAAA → 服务器 IPv6 → Nginx SSL，适合 IPv6 出口稳定的服务
-- **Tunnel 中转**：DNS CNAME → Cloudflare 边缘 → Tunnel，免端口、不依赖公网出口
-
-支持逐服务切换路由方式、智能推荐一键配置、DNS 记录自动同步与冲突保护。
-详见 [网络配置指南](docs/network-config.md)。
 
 ## 新增模块
 

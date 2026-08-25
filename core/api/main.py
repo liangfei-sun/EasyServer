@@ -6,21 +6,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi import Request
 from fastapi.responses import FileResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Route
+import asyncio
 import os
+import re
 import shutil
 
 from .routes import services, config, modules, nginx, docs, backup, cloudflare, dns
+from .routes import network, domains
 from .core.auth import AuthMiddleware
 
 app = FastAPI(
     title="EasyServer API",
     description="个人服务器一站式管理引擎",
-    version="0.2.4"
+    version="0.3.0"
 )
 
 # CORS 配置：从环境变量或 config.yaml 动态读取允许的域名
 _cors_origins = ["http://127.0.0.1:8900", "http://localhost:8900"]
+# 用于动态匹配的正则模式列表（匹配 https://<subdomain>.<domain>）
+_cors_origin_patterns: list[re.Pattern] = []
+
 _cors_origins_str = os.environ.get("CORS_ORIGINS", "")
 if _cors_origins_str:
     _cors_origins = [o.strip() for o in _cors_origins_str.split(",") if o.strip()]
@@ -30,12 +37,50 @@ else:
         from .core.config_manager import ConfigManager
         _cm = ConfigManager(os.environ.get("EASYSERVER_ROOT", "/app"))
         _cfg = _cm.load_config()
+
+        # 收集所有已知域名
+        _known_domains: set[str] = set()
+
+        # 从 domains 数组读取（多域名架构）
+        for _d in _cfg.get("domains", []):
+            _dom = _d.get("domain", "")
+            if _dom:
+                _known_domains.add(_dom)
+
+        # 回退：单域名字段
         _domain = _cfg.get("domain", "")
         if _domain:
-            _cors_origins.append(f"https://{_domain}")
-            _cors_origins.append(f"https://*.{_domain}")
+            _known_domains.add(_domain)
+
+        # 从 cloudflare_tunnel.routes 提取完整 hostname 作为显式 origin
+        _tunnel = _cfg.get("cloudflare_tunnel", {})
+        for _route in _tunnel.get("routes", []):
+            _hostname = _route.get("hostname", "")
+            if _hostname:
+                _cors_origins.append(f"https://{_hostname}")
+
+        # 为每个已知域名构建显式 origin + 通配匹配模式
+        for _dom in _known_domains:
+            _cors_origins.append(f"https://{_dom}")
+            # 匹配 https://<任意子域名>.<domain>，用于动态 Origin 校验
+            _cors_origin_patterns.append(
+                re.compile(rf"^https://[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.{re.escape(_dom)}$")
+            )
     except Exception:
         pass
+
+
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    """在标准 CORSMiddleware 之前执行，按需将匹配模式的 Origin 加入允许列表"""
+
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+        # 如果 Origin 匹配任一动态模式，将其加入允许列表
+        if origin and any(p.match(origin) for p in _cors_origin_patterns):
+            if origin not in _cors_origins:
+                _cors_origins.append(origin)
+        return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +89,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 动态 CORS 中间件：在 CORSMiddleware 之前执行，按需扩展允许列表
+app.add_middleware(DynamicCORSMiddleware)
 
 # 鉴权中间件
 app.add_middleware(AuthMiddleware)
@@ -57,6 +105,8 @@ app.include_router(docs.router)
 app.include_router(backup.router)
 app.include_router(cloudflare.router)
 app.include_router(dns.router)
+app.include_router(network.router)
+app.include_router(domains.router)
 
 
 @app.get("/api/health")
@@ -130,11 +180,11 @@ def _get_system_resources() -> dict:
 @app.get("/api/info")
 async def system_info():
     """系统信息（含资源使用）"""
-    resources = _get_system_resources()
+    resources = await asyncio.to_thread(_get_system_resources)
     return {
         "name": "EasyServer",
-        "version": "0.2.4",
-        "description": "个人服务器一站式部署方案",
+        "version": "0.3.0",
+        "description": "个人服务器一站式部署平台",
         **resources,
     }
 

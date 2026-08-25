@@ -11,52 +11,18 @@ from ..core.docker_manager import DockerManager
 from ..core.module_loader import ModuleLoader
 from ..core.cloudflare_api import CloudflareClient, CloudflareAPIError
 from ..core.alidns_api import AliyunDNSClient, AliyunDNSAPIError
+from ..core.deps import PROJECT_ROOT, get_config_manager, get_docker_manager, get_module_loader
+from ..core.background_tasks import trigger_dns_sync_background
 from .dns import _get_aliyun_credentials
-import asyncio
 import logging
-import os
 import re
 
 router = APIRouter(prefix="/api/cloudflare", tags=["cloudflare"])
 
 logger = logging.getLogger("easyserver.cloudflare")
 
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
-
-# 后台任务引用集，防止异步任务被 GC 提前回收
-_background_tasks = set()
-
-
-def _trigger_dns_sync_background():
-    """异步触发一次 DNS 同步（不阻塞 HTTP 响应，异常不影响主流程）"""
-    from .dns import sync_dns
-
-    async def _run():
-        try:
-            result = await sync_dns()
-            summary = result.get("summary", {}) if isinstance(result, dict) else {}
-            logger.info("后台 DNS 同步完成: %s", summary)
-        except Exception as e:
-            logger.warning("后台 DNS 同步失败（不影响主流程）: %s", e)
-
-    task = asyncio.create_task(_run())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
 # 脱敏前缀
 MASK_PREFIX = "***"
-
-
-def _get_config_manager():
-    return ConfigManager(PROJECT_ROOT)
-
-
-def _get_docker_manager():
-    return DockerManager(PROJECT_ROOT)
-
-
-def _get_module_loader():
-    return ModuleLoader(PROJECT_ROOT)
 
 
 def _mask(value: str) -> str:
@@ -151,7 +117,7 @@ class UnpublishRequest(BaseModel):
 @router.post("/verify")
 async def verify(request: VerifyRequest):
     """验证 API Token 有效性，并检查域名是否已托管到 Cloudflare"""
-    cm = _get_config_manager()
+    cm = get_config_manager()
     domain = _get_domain(cm)
     client = CloudflareClient(request.api_token.strip())
     try:
@@ -206,8 +172,8 @@ async def verify(request: VerifyRequest):
 @router.post("/setup")
 async def setup(request: SetupRequest):
     """一键接入：创建/复用隧道 → 保存凭证 → 启动 cloudflare-tunnel 模块"""
-    cm = _get_config_manager()
-    dm = _get_docker_manager()
+    cm = get_config_manager()
+    dm = get_docker_manager()
     domain = _get_domain(cm)
     if not domain:
         raise HTTPException(status_code=400, detail="请先在全局设置中配置域名")
@@ -311,7 +277,7 @@ async def setup(request: SetupRequest):
 @router.get("/status")
 async def status():
     """查询隧道配置状态、连接状态、已发布路由与可发布服务"""
-    cm = _get_config_manager()
+    cm = get_config_manager()
     cfg = _tunnel_cfg(cm)
     domain = _get_domain(cm)
     env = cm.load_env()
@@ -349,7 +315,7 @@ async def status():
 
     # 可发布服务列表（已安装且配置了子域名/端口）
     services = []
-    ml = _get_module_loader()
+    ml = get_module_loader()
     installed_ids = cm.get_installed_modules()
     for mid in installed_ids:
         metadata = ml.get_module_by_id(mid)
@@ -478,7 +444,7 @@ async def status():
 @router.post("/publish")
 async def publish(request: PublishRequest):
     """发布服务：添加 ingress 路由 + 创建 DNS CNAME 记录"""
-    cm = _get_config_manager()
+    cm = get_config_manager()
     cfg = _tunnel_cfg(cm)
     target_domain = _resolve_domain(cm, request.domain)
     domain_cfg = cm.get_domain_config(target_domain)
@@ -530,7 +496,7 @@ async def publish(request: PublishRequest):
     # 0b. 确保 cloudflare-tunnel 模块已安装并运行（幂等 docker compose up -d）
     module_started = False
     try:
-        module_started = await _ensure_tunnel_module_running(cm, _get_docker_manager())
+        module_started = await _ensure_tunnel_module_running(cm, get_docker_manager())
     except HTTPException:
         raise
     except Exception as e:
@@ -640,7 +606,7 @@ async def publish(request: PublishRequest):
 @router.post("/unpublish")
 async def unpublish(request: UnpublishRequest):
     """取消发布：移除 ingress 路由 + 删除 DNS 记录"""
-    cm = _get_config_manager()
+    cm = get_config_manager()
     cfg = _tunnel_cfg(cm)
     hostname = request.hostname.strip().lower()
     tunnel_id = cfg.get("tunnel_id", "")
@@ -737,7 +703,7 @@ async def unpublish(request: UnpublishRequest):
 
     # 4. 异步触发一次 DNS 同步，重建域名反代解析记录（删除 CNAME 后子域名无任何记录）
     try:
-        _trigger_dns_sync_background()
+        trigger_dns_sync_background()
     except Exception as e:
         logger.warning("后台 DNS 同步任务调度失败: %s", e)
 

@@ -53,14 +53,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useMobile } from '@/composables/useMobile'
 import api from '../api'
 
-const isMobile = ref(false)
-const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
-onMounted(() => { checkMobile(); window.addEventListener('resize', checkMobile) })
-onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
+const { isMobile } = useMobile()
 
 // ===== 基础信息 =====
 const domain = ref('')

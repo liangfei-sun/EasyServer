@@ -1,6 +1,7 @@
 """
 EasyServer Nginx Config Generator
 """
+import asyncio
 import subprocess
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
@@ -96,3 +97,23 @@ class NginxGenerator:
         """重启 Nginx 容器（端口变更时需要）"""
         result = subprocess.run(["docker", "restart", "easyserver-nginx"], capture_output=True, text=True)
         return result.returncode == 0
+
+    async def async_reload_nginx(self) -> bool:
+        """异步重载 Nginx"""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "easyserver-nginx", "nginx", "-s", "reload",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await proc.communicate()
+        return proc.returncode == 0
+
+    async def async_restart_nginx(self) -> bool:
+        """异步重启 Nginx 容器（端口变更时需要）"""
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "restart", "easyserver-nginx",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await proc.communicate()
+        return proc.returncode == 0

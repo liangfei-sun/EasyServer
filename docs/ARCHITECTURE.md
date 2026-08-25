@@ -8,7 +8,7 @@ EasyServer 是一个面向非技术用户的个人服务器一站式部署方案
 
 - **模块化架构**：每个服务独立模块，按需安装，互不影响
 - **Web 管理界面**：所有操作通过浏览器完成，零命令行门槛
-- **四种访问模式**：域名反代（阿里云/Cloudflare）、Cloudflare Tunnel、IPv6 直连
+- **四种访问模式**：域名反代（阿里云/Cloudflare）、Cloudflare Tunnel、IPv6 直连、智能混合路由（推荐）
 - **安全认证**：JWT Token 登录保护，7 天有效期
 - **可扩展设计**：新增服务只需添加模块目录，无需修改核心代码
 
@@ -22,8 +22,42 @@ easyserver/
 │   ├── api/                       # 后端 API（Python FastAPI）
 │   │   ├── main.py                # 入口
 │   │   ├── routes/                # API 路由
+│   │   │   ├── config.py          # 配置管理路由
+│   │   │   ├── network.py         # 网络配置路由（从 config.py 拆分）
+│   │   │   ├── domains.py         # 多域名管理路由
+│   │   │   ├── modules.py         # 模块管理路由
+│   │   │   ├── services.py        # 服务操作路由
+│   │   │   ├── cloudflare.py      # Cloudflare Tunnel 路由
+│   │   │   ├── dns.py             # DNS 管理路由
+│   │   │   ├── nginx.py           # Nginx 配置路由
+│   │   │   ├── backup.py          # 备份路由
+│   │   │   └── docs.py            # 文档路由
 │   │   └── core/                  # 核心逻辑
+│   │       ├── config_manager.py  # 配置管理器（YAML + .env 读写）
+│   │       ├── docker_manager.py  # Docker 容器管理
+│   │       ├── module_loader.py   # 模块加载器
+│   │       ├── auth.py            # 认证（JWT + bcrypt）
+│   │       ├── deps.py            # 依赖注入（FastAPI Depends）
+│   │       ├── background_tasks.py # 后台任务管理
+│   │       ├── nginx_utils.py     # Nginx 配置工具函数
+│   │       ├── nginx_generator.py # Nginx 配置模板生成
+│   │       ├── cloudflare_api.py  # Cloudflare API 封装
+│   │       ├── alidns_api.py      # 阿里云 DNS API 封装
+│   │       ├── dns_providers.py   # DNS 提供商抽象层
+│   │       └── ip_utils.py        # IP 地址工具函数
 │   ├── web/                       # 前端（Vue 3）
+│   │   ├── src/
+│   │   │   ├── views/             # 页面组件
+│   │   │   │   ├── network/       # 网络配置子组件
+│   │   │   │   │   ├── DomainManager.vue   # 域名管理
+│   │   │   │   │   ├── DomainReverse.vue   # 域名反代配置
+│   │   │   │   │   ├── TunnelSetup.vue     # Tunnel 配置向导
+│   │   │   │   │   └── TunnelPublish.vue   # Tunnel 服务发布
+│   │   │   │   └── ...            # 其他页面
+│   │   │   ├── composables/       # 组合式函数
+│   │   │   │   └── useMobile.js   # 移动端检测
+│   │   │   ├── router/            # 路由配置
+│   │   │   └── api/               # API 请求封装
 │   │   └── dist/                  # 构建产物
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -37,12 +71,13 @@ easyserver/
 │       └── scripts/               # 模块级脚本
 │
 ├── data/                          # 持久化数据（gitignore）
+│   ├── config.yaml                # 全局配置（运行时生成）
 │   └── <module>/                  # 各模块的数据目录
 │
 ├── scripts/                       # 全局脚本
 │   ├── install.sh                 # 系统级安装脚本
 │   ├── manage.sh                  # CLI 管理命令
-│   └── backup.sh                  # 备份脚本
+│   └── auto-deploy.sh             # 自动化部署脚本
 │
 ├── docs/                          # 项目文档
 ├── .env                           # 全局配置（gitignore）
@@ -117,6 +152,14 @@ networks:
 
 ## 访问模式
 
+### 多域名架构
+
+EasyServer 支持多域名管理，通过 `config.yaml` 中的 `domains[]` 数组实现：
+
+- 每个域名条目独立绑定 DNS 提供商（阿里云 / Cloudflare）和用途（反代 / Tunnel）
+- 保留 `domain` 字段作为主域名（向后兼容），无 `domains` 字段时自动从 `domain` 推导
+- 所有 API 的 `domain` 参数均为 `Optional`，默认回退主域名
+
 ### 域名模式（domain）
 
 ```
@@ -148,9 +191,16 @@ networks:
 - 不启动 Nginx（或 Nginx 仅做基础功能）
 - 用户通过 IPv6 地址 + 端口直接访问各服务
 
-### 混合模式（hybrid）
+### 智能混合路由模式（hybrid）— 推荐
 
-两种模式并存：Nginx 反代 + 服务端口同时开放。
+域名反代与 Tunnel 中转并存，按服务粒度自由选择路由方式：
+
+- **域名反代服务**：DNS AAAA → 服务器 IPv6 → Nginx SSL，适合 IPv6 出口稳定的服务
+- **Tunnel 中转服务**：DNS CNAME → Cloudflare 边缘 → Tunnel，免端口、不依赖公网出口
+- 支持逐服务切换路由方式，智能推荐一键配置
+- DNS 记录自动同步，内置冲突保护（同一域名不能同时用于反代和 Tunnel）
+
+> **推荐**：hybrid 模式是最佳实践，兼顾域名统一管理和 Tunnel 免端口优势，可按服务特性灵活选择路由。
 
 ### 模式切换
 
@@ -169,9 +219,17 @@ networks:
 - 扫描 modules/ 目录自动发现可用模块
 - 读写 data/config.yaml 管理全局配置
 - 使用 Jinja2 渲染 Nginx 配置模板
+- **依赖注入**：通过 `deps.py` 统一管理 FastAPI 依赖（配置、Docker 客户端等）
+- **后台任务**：通过 `background_tasks.py` 管理模块安装/卸载等耗时操作
+- **路由拆分**：原 config.py 路由拆分为 `config.py`（配置管理）、`network.py`（网络配置）、`domains.py`（多域名管理）
 
 ### 前端（Vue 3）
 
+- **Element Plus 按需引入**：通过 unplugin-vue-components 自动按需导入，减小打包体积
+- **路由懒加载**：所有页面组件使用 `() => import()` 动态导入，首屏加载更快
+- **Vite 分包**：vendor chunk 分离，Element Plus 独立打包，利用浏览器缓存
+- **移动端适配**：`useMobile` composable 统一检测移动端，响应式布局
+- **组件拆分**：NetworkConfig.vue 拆分为 4 个子组件（DomainManager、TunnelPublish、TunnelSetup、DomainReverse），降低单文件复杂度
 - 安装向导：极简 2 步（域名+密码），初始设置不安装任何模块，网络配置时按所选访问方式自动安装对应网络模块
 - 登录页：JWT Token 认证
 - 网络配置：智能推荐 + 统一管理（Tunnel / 域名反代 / IPv6 直连 / 自由配置，含 DNS 自动同步）
@@ -179,7 +237,7 @@ networks:
 - 服务管理：独立卡片式操作，危险操作二次确认
 - 应用商店：搜索筛选、一键安装（后台任务执行，可实时查看安装进度与失败原因）
 - 备份中心：本地+云端备份、快照管理
-- 全局设置：容器资源管理、基础信息（网络相关配置已迁移至「网络配置」页面）
+- 设置：容器资源管理、基础信息（网络相关配置在「网络配置」页面）
 
 ### 容器化
 
@@ -204,10 +262,15 @@ services:
 
 ## 安全设计
 
-- JWT Token 认证，7 天有效期，过期自动跳转登录
+- **密码安全**：使用 bcrypt 哈希存储密码，防暴力破解
+- **JWT 认证**：Token 7 天有效期，JWT 密钥自动持久化到 `.env`（首次生成后不再变更）
+- **登录速率限制**：限制登录尝试频率，防止暴力破解
+- **Setup 白名单**：初始化接口仅允许本地访问（127.0.0.1），防止公网未初始化时被恶意配置
+- **CORS 动态中间件**：根据当前域名配置动态计算允许的 Origin，避免硬编码
+- **Nginx 安全头**：自动添加 X-Frame-Options、X-Content-Type-Options、Strict-Transport-Security 等安全响应头
+- **容器安全**：所有容器添加 `no-new-privileges` 安全选项，防止权限提升
 - `.env` 文件加入 `.gitignore`，防止密钥泄露
 - DNS 凭证 API 层脱敏返回，前端不显示完整密钥
-- 所有容器添加 `no-new-privileges` 安全选项
 - 日志统一限制 10m/3files，防止磁盘撑满
 - 域名模式下服务端口仅绑定 127.0.0.1
 - SSL 证书目录不纳入版本控制

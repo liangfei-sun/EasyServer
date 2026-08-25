@@ -33,7 +33,7 @@ services:
         max-file: "3"
 
   joplin-app:
-    image: joplin/server:latest
+    image: joplin/server:3.0.1
     container_name: easyserver-joplin-app
     depends_on:
       joplin-db:

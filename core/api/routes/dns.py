@@ -10,26 +10,16 @@ from ..core.module_loader import ModuleLoader
 from ..core.alidns_api import AliyunDNSClient, AliyunDNSAPIError
 from ..core.cloudflare_api import CloudflareClient, CloudflareAPIError
 from ..core.ip_utils import get_public_ips
+from ..core.deps import get_config_manager, get_module_loader
 from typing import Optional
 import logging
-import os
 
 router = APIRouter(prefix="/api/dns", tags=["dns"])
 
 logger = logging.getLogger("easyserver.dns")
 
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
-
 # 域名反代 A/AAAA 记录统一关闭 Cloudflare 代理（DNS only，直连服务器 IP）
 PROXIED = False
-
-
-def _get_config_manager():
-    return ConfigManager(PROJECT_ROOT)
-
-
-def _get_module_loader():
-    return ModuleLoader(PROJECT_ROOT)
 
 
 def _get_aliyun_credentials(cm: ConfigManager) -> dict:
@@ -137,8 +127,8 @@ def _build_targets(ips: dict) -> list:
 @router.get("/status")
 async def dns_status(domain: Optional[str] = Query(None, description="指定域名，未指定时返回主域名状态")):
     """查询 DNS 同步状态：提供商、凭证、公网 IP、各子域名记录现状"""
-    cm = _get_config_manager()
-    ml = _get_module_loader()
+    cm = get_config_manager()
+    ml = get_module_loader()
     cfg = cm.load_config()
 
     target_domain = domain or cm.get_primary_domain()
@@ -215,8 +205,8 @@ async def sync_dns(domain: Optional[str] = Query(None, description="指定域名
     """自动同步 DNS 记录：为所有子域名创建/更新 A / AAAA 记录（幂等）。
     domain 指定时只同步该域名的子域名记录；未指定时同步主域名（向后兼容）。
     """
-    cm = _get_config_manager()
-    ml = _get_module_loader()
+    cm = get_config_manager()
+    ml = get_module_loader()
     cfg = cm.load_config()
 
     target_domain = domain or cm.get_primary_domain()

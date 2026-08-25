@@ -2,7 +2,7 @@
 
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2024.12.1
     container_name: easyserver-cloudflare-tunnel
     network_mode: host
     command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
@@ -10,6 +10,8 @@ services:
       - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
       - TZ=Asia/Shanghai
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options:

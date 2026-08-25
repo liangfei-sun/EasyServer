@@ -32,9 +32,20 @@ Nginx（反向代理 + SSL，可选模块）
 
 ## 访问方式
 
-EasyServer 支持两种外网访问方式：
+EasyServer 支持四种外网访问方式：
 
-### 方式一：域名反代（推荐）
+### 方式一：智能混合路由（推荐）
+
+域名反代与 Tunnel 中转并存，按服务粒度自由选择路由方式：
+
+- 域名反代服务：DNS AAAA → 服务器 IPv6 → Nginx SSL，适合 IPv6 出口稳定的服务
+- Tunnel 中转服务：DNS CNAME → Cloudflare 边缘 → Tunnel，免端口、不依赖公网出口
+- 支持逐服务切换路由方式，智能推荐一键配置
+- 支持阿里云和 Cloudflare 两种 DNS 提供商
+
+> **推荐**：hybrid 模式是最佳实践，兼顾域名统一管理和 Tunnel 免端口优势，可按服务特性灵活选择路由。
+
+### 方式二：域名反代
 
 通过自己的域名 + SSL 证书访问各服务，格式为 `子域名.你的域名:端口`。
 
@@ -42,14 +53,14 @@ EasyServer 支持两种外网访问方式：
 - 支持阿里云和 Cloudflare 两种 DNS 提供商
 - 需要：自己的域名 + DNS 配置 + SSL 证书
 
-### 方式二：Cloudflare Tunnel
+### 方式三：Cloudflare Tunnel
 
 通过 Cloudflare 隧道穿透访问，无需公网 IP 和开放端口。
 
 - 优点：无需公网 IP，无需端口转发，自带 SSL
 - 缺点：流量经过 Cloudflare，需 Cloudflare 账号
 
-### 方式三：IPv6 直连
+### 方式四：IPv6 直连
 
 通过服务器的 IPv6 地址 + 端口直接访问各服务。
 
@@ -80,12 +91,13 @@ EasyServer 支持两种外网访问方式：
 - 安装采用后台任务执行，可实时查看拉取镜像进度；失败时直接提示原因（如无法连接 ghcr.io / Docker Hub）
 - 卸载不需要的服务：卸载会停止容器并删除镜像，可在确认弹窗中选择保留或删除该模块的数据目录
 
-### 全局设置
+### 网络配置
 
-- 域名配置
-- 访问模式切换（域名/IPv6/混合）
+- 多域名管理（每个域名独立 DNS 提供商）
+- 访问模式切换（智能混合路由 / 域名 / IPv6 / Tunnel）
 - SSL 证书管理
 - Nginx 配置生成
+- DNS 记录自动同步
 
 ---
 
@@ -101,8 +113,11 @@ EasyServer 支持两种外网访问方式：
 
 ```bash
 cd ~/easyserver
+docker compose build   # 重建容器以安装新依赖
 docker compose up -d
 ```
+
+> **提示**：更新 EasyServer 时，若后端依赖有变更，需先执行 `docker compose build` 重建容器。
 
 ### 第三步：访问管理面板
 

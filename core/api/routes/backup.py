@@ -5,16 +5,13 @@ EasyServer Backup API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from ..core.docker_manager import DockerManager
-from ..core.config_manager import ConfigManager
-import os
-import subprocess
+from ..core.deps import PROJECT_ROOT, get_config_manager, get_docker_manager
+import asyncio
 import json
 from pathlib import Path
 from datetime import datetime
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
 
 
 class ScheduleUpdate(BaseModel):
@@ -33,12 +30,14 @@ async def backup_status():
 
     if repo_dir.exists():
         try:
-            proc = subprocess.run(
-                ["docker", "exec", "easyserver-backup", "restic", "snapshots", "--json"],
-                capture_output=True, text=True, timeout=30
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", "easyserver-backup", "restic", "snapshots", "--json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            if proc.returncode == 0 and proc.stdout.strip():
-                snapshots = json.loads(proc.stdout)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode == 0 and stdout.decode().strip():
+                snapshots = json.loads(stdout.decode())
                 result["snapshots"] = snapshots[-10:]  # 最近10个
                 if snapshots:
                     result["last_backup"] = snapshots[-1].get("time", "")
@@ -60,16 +59,18 @@ async def backup_status():
 async def trigger_backup():
     """手动触发一次备份"""
     try:
-        proc = subprocess.run(
-            ["docker", "exec", "easyserver-backup", "/scripts/backup.sh"],
-            capture_output=True, text=True, timeout=600
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "easyserver-backup", "/scripts/backup.sh",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
         return {
             "success": proc.returncode == 0,
-            "output": proc.stdout[-2000:] if proc.stdout else "",
-            "error": proc.stderr[-500:] if proc.stderr else ""
+            "output": stdout.decode()[-2000:] if stdout else "",
+            "error": stderr.decode()[-500:] if stderr else ""
         }
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         raise HTTPException(status_code=408, detail="备份超时（10分钟）")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -78,10 +79,10 @@ async def trigger_backup():
 @router.put("/schedule")
 async def update_schedule(body: ScheduleUpdate):
     """更新备份周期"""
-    cm = ConfigManager(PROJECT_ROOT)
+    cm = get_config_manager()
     cm.set_env_value("BACKUP_SCHEDULE", body.schedule)
     cm.set_env_value("BACKUP_RETAIN_DAYS", str(body.retain_days))
     # 重启备份容器使新计划生效
-    dm = DockerManager(PROJECT_ROOT)
+    dm = get_docker_manager()
     dm.restart_module("backup")
     return {"success": True, "schedule": body.schedule, "retain_days": body.retain_days}

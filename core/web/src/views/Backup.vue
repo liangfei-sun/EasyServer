@@ -133,9 +133,11 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useMobile } from '@/composables/useMobile'
 import api from '../api'
 
-const isMobile = ref(false)
+const { isMobile } = useMobile()
+
 const backupStatus = ref({ initialized: false, snapshots: [], last_backup: '', total_size_mb: 0 })
 const backupLoading = ref(false)
 const backupTriggering = ref(false)
@@ -232,12 +234,8 @@ const saveCloudConfig = async () => {
 }
 
 onMounted(() => {
-  checkMobile()
-  window.addEventListener('resize', checkMobile)
   loadBackupStatus()
 })
-
-const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 </script>
 
 <style scoped>

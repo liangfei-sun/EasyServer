@@ -2,7 +2,7 @@
 
 services:
   ddns-go:
-    image: jeessy/ddns-go
+    image: jeessy/ddns-go:v6.7.0
     container_name: easyserver-ddns-go
     network_mode: host
     volumes:
@@ -11,6 +11,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options:

@@ -4,16 +4,10 @@ EasyServer Docs API
 """
 from fastapi import APIRouter, HTTPException
 from ..core.module_loader import ModuleLoader
+from ..core.deps import PROJECT_ROOT, get_module_loader
 from pathlib import Path
-import os
 
 router = APIRouter(prefix="/api/docs", tags=["docs"])
-
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
-
-
-def _get_module_loader():
-    return ModuleLoader(PROJECT_ROOT)
 
 
 def _get_docs_dir():
@@ -32,7 +26,7 @@ GLOBAL_DOCS = [
 async def list_docs():
     """获取文档目录列表（全局文档 + 模块文档）"""
     docs_dir = _get_docs_dir()
-    ml = _get_module_loader()
+    ml = get_module_loader()
 
     # 全局文档
     global_docs = []
@@ -71,7 +65,7 @@ async def list_docs():
 @router.get("/modules/{module_id}")
 async def get_module_docs(module_id: str):
     """获取模块使用说明"""
-    ml = _get_module_loader()
+    ml = get_module_loader()
     module = ml.get_module_by_id(module_id)
     if not module:
         raise HTTPException(status_code=404, detail=f"模块 {module_id} 不存在")

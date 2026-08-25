@@ -7,12 +7,22 @@ import json
 import time
 import base64
 import os
+import secrets
+import logging
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-# JWT 密钥（从环境变量读取，默认随机生成）
-JWT_SECRET = os.environ.get("JWT_SECRET", hashlib.sha256(b"easyserver-secret-key").hexdigest())
+logger = logging.getLogger(__name__)
+
+# JWT 密钥（从环境变量读取，未设置则每次启动随机生成）
+_env_jwt_secret = os.environ.get("JWT_SECRET")
+if _env_jwt_secret:
+    JWT_SECRET = _env_jwt_secret
+else:
+    JWT_SECRET = secrets.token_hex(32)
+    logger.warning("JWT_SECRET 环境变量未设置，已使用随机密钥。"
+                   "重启后所有现有 Token 将失效，建议设置 JWT_SECRET 环境变量。")
 JWT_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
 
 # 白名单路径：不需要鉴权
@@ -22,8 +32,41 @@ WHITELIST_PATHS = {
     "/api/config/setup/status",
 }
 
-# Setup 阶段白名单前缀（setup 未完成时放行）
+# Setup 阶段白名单前缀（setup 未完成时仅放行 setup 接口）
 SETUP_WHITELIST_PREFIX = "/api/config/setup"
+
+# ── 登录速率限制（基于 IP，内存字典） ──
+_login_attempts: dict[str, dict] = {}  # {ip: {"count": int, "window_start": float}}
+LOGIN_RATE_LIMIT_MAX = 10        # 每个窗口最大尝试次数
+LOGIN_RATE_LIMIT_WINDOW = 60     # 窗口大小（秒）
+
+
+def check_login_rate_limit(client_ip: str) -> bool:
+    """检查 IP 是否超出登录速率限制，返回 True 表示允许。"""
+    now = time.time()
+    record = _login_attempts.get(client_ip)
+    if record is None:
+        return True
+    # 窗口已过期，重置
+    if now - record["window_start"] >= LOGIN_RATE_LIMIT_WINDOW:
+        del _login_attempts[client_ip]
+        return True
+    return record["count"] < LOGIN_RATE_LIMIT_MAX
+
+
+def record_login_attempt(client_ip: str) -> None:
+    """记录一次登录尝试。"""
+    now = time.time()
+    record = _login_attempts.get(client_ip)
+    if record is None or now - record["window_start"] >= LOGIN_RATE_LIMIT_WINDOW:
+        _login_attempts[client_ip] = {"count": 1, "window_start": now}
+    else:
+        record["count"] += 1
+
+
+def reset_login_rate_limit(client_ip: str) -> None:
+    """登录成功后重置该 IP 的计数器。"""
+    _login_attempts.pop(client_ip, None)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -82,25 +125,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in WHITELIST_PATHS:
             return await call_next(request)
 
-        # Setup 阶段：如果 setup 未完成，放行 setup 相关接口
+        # Setup 阶段：放行 setup 相关接口
         if path.startswith(SETUP_WHITELIST_PREFIX):
             return await call_next(request)
 
-        # 检查 setup 状态，未完成时放行所有（安装向导需要）
+        # 检查 setup 状态，未完成时返回 401（setup 路径已在上方放行）
         try:
             from .config_manager import ConfigManager
             cm = ConfigManager(os.environ.get("EASYSERVER_ROOT", "/app"))
             if not cm.is_setup_completed():
-                return await call_next(request)
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "系统尚未完成初始化配置"}
+                )
         except Exception:
             pass
 
-        # 验证 Token
+        # 验证 Token（仅从 Authorization header 获取）
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
         else:
-            token = request.query_params.get("token", "")
+            token = ""
 
         if not token:
             return JSONResponse(

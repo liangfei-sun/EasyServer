@@ -2,7 +2,7 @@
 
 services:
   jellyfin:
-    image: jellyfin/jellyfin:latest
+    image: jellyfin/jellyfin:10.9.13
     container_name: easyserver-jellyfin
     network_mode: ${JELLYFIN_NETWORK_MODE:-host}
     volumes:
@@ -14,6 +14,8 @@ services:
       - PUID=1000
       - PGID=1000
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options:
