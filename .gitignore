@@ -21,6 +21,8 @@ node_modules/
 core/web/dist/
 core/web/dist_old/
 core/web/node_modules/
+core/web/my_node_modules/
+core/web/web-build-tmp/
 .nuxt/
 .output/
 
