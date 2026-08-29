@@ -285,7 +285,11 @@ function handleTab(e) {
 
 // 切换到配置文件标签时加载
 watch(activeTab, (tab) => {
-  if (tab === 'files') loadFileList()
+  if (tab === 'files') {
+    loadFileList()
+    // 加载当前选中文件的内容
+    if (selectedFile.value) loadFileContent(selectedFile.value)
+  }
 })
 
 // 切换文件时加载内容
@@ -295,6 +299,8 @@ watch(selectedFile, (file) => {
 
 onMounted(() => {
   loadConfig()
+  // 预加载文件列表，确保切换标签时数据已就绪
+  loadFileList()
 })
 </script>
 
