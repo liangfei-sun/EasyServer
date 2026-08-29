@@ -47,52 +47,54 @@
 
       <!-- 配置文件标签页 -->
       <el-tab-pane label="配置文件" name="files">
-        <!-- 安全警告 -->
-        <el-alert
-          type="warning"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 20px"
-        >
-          <template #title>
-            直接编辑配置文件可能影响系统运行，请确保了解各配置项的含义。保存后将自动检测变更并触发关联操作。
-          </template>
-        </el-alert>
+        <!-- 安全警告横幅 -->
+        <div class="safety-warning">
+          <span class="warning-icon">⚠</span>
+          <span class="warning-text">直接编辑配置文件可能影响系统运行，请确保了解各配置项的含义。保存后将自动检测变更并触发关联操作。</span>
+        </div>
 
-        <!-- 文件选择器 -->
-        <div class="file-selector">
-          <span class="file-selector-label">选择文件：</span>
-          <el-radio-group v-model="selectedFile" size="default">
-            <el-radio-button
+        <!-- 文件选择器 + 操作按钮栏（同一行） -->
+        <div class="editor-toolbar">
+          <div class="file-tabs">
+            <div
               v-for="f in files"
               :key="f.name"
-              :value="f.name"
+              class="file-tab"
+              :class="{ active: selectedFile === f.name }"
+              @click="selectedFile = f.name"
             >
               {{ f.name }}
-              <span class="file-size-badge">{{ formatSize(f.size) }}</span>
-            </el-radio-button>
-          </el-radio-group>
+              <span class="file-tab-size">({{ formatSize(f.size) }})</span>
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <el-button @click="resetContent">撤销修改</el-button>
+            <el-button type="primary" :loading="saving" @click="saveFile">保存</el-button>
+          </div>
         </div>
 
         <!-- 代码编辑器 -->
-        <textarea
-          ref="editorRef"
-          v-model="fileContent"
-          class="config-editor"
-          spellcheck="false"
-          autocomplete="off"
-          @keydown.tab.prevent="handleTab"
-        />
-
-        <!-- 操作按钮栏 -->
-        <div class="editor-actions">
-          <el-button type="primary" :loading="saving" @click="saveFile">
-            保存
-          </el-button>
-          <el-button @click="resetContent">
-            撤销修改
-          </el-button>
-          <span v-if="isDirty" class="dirty-hint">有未保存的修改</span>
+        <div class="editor-wrapper">
+          <!-- 编辑器标题栏 -->
+          <div class="editor-titlebar">
+            <span class="editor-file-path">{{ selectedFile === 'config.yaml' ? 'data/config.yaml' : '.env' }}</span>
+            <span class="editor-meta">{{ selectedFile === 'config.yaml' ? 'YAML' : 'ENV' }} · UTF-8 · {{ lineCount }} 行</span>
+          </div>
+          <!-- 编辑区域 -->
+          <div class="editor-body">
+            <div class="line-numbers" ref="lineNumbersRef">
+              <div v-for="n in lineCount" :key="n" class="line-num">{{ n }}</div>
+            </div>
+            <textarea
+              ref="editorRef"
+              v-model="fileContent"
+              class="code-textarea"
+              spellcheck="false"
+              autocomplete="off"
+              @keydown.tab.prevent="handleTab"
+              @scroll="syncScroll"
+            />
+          </div>
         </div>
 
         <!-- 保存警告反馈 -->
@@ -206,6 +208,7 @@ const viewLogs = async (moduleId) => {
 
 // ===== 配置文件编辑 =====
 const editorRef = ref(null)
+const lineNumbersRef = ref(null)
 const files = ref([])
 const selectedFile = ref('config.yaml')
 const fileContent = ref('')
@@ -215,10 +218,17 @@ const warnings = ref([])
 const loadingFile = ref(false)
 
 const isDirty = computed(() => fileContent.value !== originalContent.value)
+const lineCount = computed(() => (fileContent.value ? fileContent.value.split('\n').length : 1))
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   return (bytes / 1024).toFixed(1) + ' KB'
+}
+
+function syncScroll() {
+  if (lineNumbersRef.value && editorRef.value) {
+    lineNumbersRef.value.scrollTop = editorRef.value.scrollTop
+  }
 }
 
 async function loadFileList() {
@@ -327,60 +337,137 @@ onMounted(() => {
   line-height: 1.5;
 }
 
-/* 文件选择器 */
-.file-selector {
+/* 安全警告横幅 */
+.safety-warning {
+  background: #FDF6EC;
+  border: 1px solid #FAE2CD;
+  border-radius: 6px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
 }
-.file-selector-label {
-  font-size: 14px;
-  color: #606266;
+.warning-icon {
+  font-size: 16px;
   flex-shrink: 0;
 }
-.file-size-badge {
-  font-size: 11px;
-  color: #909399;
-  margin-left: 4px;
+.warning-text {
+  font-size: 13px;
+  color: #E6A23C;
+  line-height: 1.5;
 }
 
-/* 代码编辑器 */
-.config-editor {
-  width: 100%;
-  min-height: 500px;
-  font-family: 'Courier New', Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  background: #1e1e1e;
-  color: #d4d4d4;
+/* 文件选择器 + 操作栏 */
+.editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.file-tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.file-tab {
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  background: #F4F4F5;
+  color: #606266;
+  transition: all 0.2s;
+  user-select: none;
+}
+.file-tab.active {
+  background: #409EFF;
+  color: #FFF;
+  font-weight: 500;
+}
+.file-tab:hover:not(.active) {
+  background: #E9E9EB;
+}
+.file-tab-size {
+  font-size: 12px;
+  margin-left: 6px;
+  opacity: 0.7;
+}
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 代码编辑器容器 */
+.editor-wrapper {
+  background: #1E1E1E;
+  border-radius: 8px;
+  overflow: hidden;
   border: 1px solid #333;
-  border-radius: 4px;
-  padding: 12px;
-  resize: vertical;
-  tab-size: 2;
+}
+.editor-titlebar {
+  background: #252526;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #333;
+}
+.editor-file-path {
+  color: #999;
+  font-size: 12px;
+}
+.editor-meta {
+  color: #666;
+  font-size: 11px;
+}
+.editor-body {
+  display: flex;
+  max-height: 440px;
+  overflow: auto;
+  position: relative;
+}
+.line-numbers {
+  background: #2D2D2D;
+  padding: 12px 0;
+  min-width: 48px;
+  border-right: 1px solid #404040;
+  overflow: hidden;
+  user-select: none;
+  flex-shrink: 0;
+}
+.line-num {
+  height: 22px;
+  line-height: 22px;
+  text-align: right;
+  padding-right: 12px;
+  color: #858585;
+  font-size: 13px;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+}
+.code-textarea {
+  flex: 1;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 22px;
+  color: #D4D4D4;
   white-space: pre;
   overflow-wrap: normal;
   overflow: auto;
+  tab-size: 2;
+  min-height: 416px;
   box-sizing: border-box;
 }
-.config-editor:focus {
-  outline: none;
-  border-color: #409eff;
-}
-
-/* 操作按钮栏 */
-.editor-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-}
-.dirty-hint {
-  font-size: 12px;
-  color: #e6a23c;
-  margin-left: 8px;
+.code-textarea::placeholder {
+  color: #555;
 }
 
 /* 加载状态 */

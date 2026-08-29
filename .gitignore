@@ -60,6 +60,7 @@ modules/backup/data/
 
 # 临时文件
 *.tmp
+*.bak
 **/.tmp/
 **/tmp/
 core/web/node_modules_old/
