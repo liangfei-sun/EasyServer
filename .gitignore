@@ -62,3 +62,4 @@ modules/backup/data/
 *.tmp
 **/.tmp/
 **/tmp/
+core/web/node_modules_old/

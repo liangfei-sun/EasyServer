@@ -71,6 +71,11 @@ export const getDocList = () => api.get('/docs')
 export const getDoc = (docId) => api.get(`/docs/${docId}`)
 export const getModuleDocs = (moduleId) => api.get(`/docs/modules/${moduleId}`)
 
+// 配置文件编辑
+export const getConfigFiles = () => api.get('/config/files')
+export const getConfigFile = (filename) => api.get(`/config/files/${filename}`)
+export const updateConfigFile = (filename, content) => api.put(`/config/files/${filename}`, { content })
+
 // 备份管理
 export const getBackupStatus = () => api.get('/backup/status')
 export const triggerBackup = () => api.post('/backup/trigger')

@@ -14,7 +14,7 @@ import re
 import shutil
 
 from .routes import services, config, modules, nginx, docs, backup, cloudflare, dns
-from .routes import network, domains
+from .routes import network, domains, config_files
 from .core.auth import AuthMiddleware
 
 app = FastAPI(
@@ -107,6 +107,7 @@ app.include_router(cloudflare.router)
 app.include_router(dns.router)
 app.include_router(network.router)
 app.include_router(domains.router)
+app.include_router(config_files.router)
 
 
 @app.get("/api/health")
