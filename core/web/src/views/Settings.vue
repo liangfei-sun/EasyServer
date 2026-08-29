@@ -90,7 +90,7 @@
             保存
           </el-button>
           <el-button @click="resetContent">
-            重置
+            撤销修改
           </el-button>
           <span v-if="isDirty" class="dirty-hint">有未保存的修改</span>
         </div>
