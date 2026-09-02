@@ -1,5 +1,10 @@
 """
 EasyServer Nginx Config Generator
+
+模板读取与配置写入路径体系：
+- 模板优先从 MODULES_DIR/nginx/templates/ 读取（用户可自定义）
+- 不存在时回退到 MODULES_TEMPLATE_DIR/nginx/templates/（镜像内置默认模板）
+- 配置文件统一写入 MODULES_DIR/nginx/conf.d/
 """
 import asyncio
 import subprocess
@@ -8,11 +13,43 @@ from jinja2 import Environment, FileSystemLoader
 
 
 class NginxGenerator:
-    def __init__(self, project_root: str):
-        self.project_root = Path(project_root)
-        self.nginx_module_dir = self.project_root / "modules" / "nginx"
-        self.templates_dir = self.nginx_module_dir / "templates"
+    def __init__(self, modules_dir: str, template_dir: str = ""):
+        """
+        Args:
+            modules_dir: 模块工作目录（如 /easyserver_data/modules）
+            template_dir: 模块模板目录（回退路径，如 /app/modules_template）；
+                          为空则不启用回退。
+        """
+        self.modules_dir = Path(modules_dir)
+        self.nginx_module_dir = self.modules_dir / "nginx"
         self.conf_dir = self.nginx_module_dir / "conf.d"
+
+        # 模板搜索路径：优先 MODULES_DIR，回退到 template_dir
+        self._template_dirs = [str(self.nginx_module_dir / "templates")]
+        if template_dir:
+            fallback = Path(template_dir) / "nginx" / "templates"
+            if fallback.is_dir():
+                self._template_dirs.append(str(fallback))
+
+        # 用于非 Jinja2 的静态文件回退（如 ssl-params.conf）
+        self._template_fallback_dir = Path(template_dir) / "nginx" if template_dir else None
+
+    def _get_jinja_env(self) -> Environment:
+        """创建 Jinja2 环境，按搜索路径依次查找模板"""
+        return Environment(loader=FileSystemLoader(self._template_dirs))
+
+    def _resolve_template_file(self, filename: str) -> Path | None:
+        """在模板搜索路径中查找文件，返回第一个匹配路径"""
+        for d in self._template_dirs:
+            candidate = Path(d) / filename
+            if candidate.exists():
+                return candidate
+        # 额外检查 fallback 目录（非 Jinja2 模板文件，如 ssl-params.conf）
+        if self._template_fallback_dir:
+            candidate = self._template_fallback_dir / "templates" / filename
+            if candidate.exists():
+                return candidate
+        return None
 
     def generate_all(self, config: dict, modules: list):
         access_mode = config.get("access_mode", "domain")
@@ -24,7 +61,7 @@ class NginxGenerator:
         self._copy_ssl_params()
 
     def _generate_default_conf(self, config: dict):
-        env = Environment(loader=FileSystemLoader(str(self.templates_dir)))
+        env = self._get_jinja_env()
         template = env.get_template("default.conf.j2")
         content = template.render(http_port=config.get("http_port", 80))
         output = self.conf_dir / "default.conf"
@@ -36,7 +73,7 @@ class NginxGenerator:
         domain = config.get("domain", "")
         if not domain:
             return
-        env = Environment(loader=FileSystemLoader(str(self.templates_dir)))
+        env = self._get_jinja_env()
         template = env.get_template("sites.conf.j2")
         server_names = []
         sites = []
@@ -72,9 +109,9 @@ class NginxGenerator:
             f.write(content)
 
     def _copy_ssl_params(self):
-        src = self.templates_dir / "ssl-params.conf"
+        src = self._resolve_template_file("ssl-params.conf")
         dst = self.conf_dir / "ssl-params.conf"
-        if src.exists():
+        if src and src.exists():
             with open(src, "r") as f:
                 content = f.read()
             with open(dst, "w") as f:

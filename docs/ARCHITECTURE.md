@@ -60,9 +60,10 @@ easyserver/
 │   │   │   └── api/               # API 请求封装
 │   │   └── dist/                  # 构建产物
 │   ├── requirements.txt
-│   └── Dockerfile
+│   ├── Dockerfile              # 多阶段构建：前端编译 + Python 运行时（内置 Docker CLI）
+│   └── entrypoint.sh           # 容器入口脚本（自动初始化 .env / 网络 / 模块模板）
 │
-├── modules/                       # 服务模块目录
+├── modules/                       # 服务模块目录（构建时复制为镜像内 modules_template/）
 │   ├── _registry.yaml             # 模块注册表（分类索引）
 │   └── <module>/                  # 每个模块独立目录
 │       ├── module.yaml            # 模块元数据（自描述）
@@ -82,9 +83,12 @@ easyserver/
 ├── docs/                          # 项目文档
 ├── .env                           # 全局配置（gitignore）
 ├── .env.example                   # 配置模板
-├── docker-compose.yml             # 核心引擎编排
+├── .dockerignore                  # Docker 构建排除规则
+├── docker-compose.yml             # 核心引擎编排（自包含镜像）
 └── README.md
 ```
+
+> **镜像内目录结构说明**：Docker 构建时，`modules/` 复制为镜像内的 `/app/modules_template/`（只读模板），`scripts/`、`docs/`、`.env.example` 也一并打包进镜像。容器首次启动时，`entrypoint.sh` 将 `modules_template/` 内容复制到宿主机 `PROJECT_ROOT/modules/` 目录，后续运行时直接操作宿主机目录，镜像内模板保持不变。
 
 ---
 
@@ -103,10 +107,18 @@ easyserver/
 
 ### 模块加载流程
 
-1. `module_loader` 扫描 `modules/` 目录
+1. `module_loader` 扫描 `MODULES_DIR`（宿主机运行时目录）
 2. 解析每个子目录中的 `module.yaml`
 3. 读取 `_registry.yaml` 获取分类信息
 4. 合并为完整的模块列表供 API 和 Web 使用
+
+**双路径回退机制**：读取模块文件（如 Nginx Jinja2 模板）时，优先从 `MODULES_DIR`（宿主机运行时目录）读取，不存在时回退到 `MODULES_TEMPLATE_DIR`（镜像内只读模板）。写入操作（如 Nginx 配置生成）始终写入 `MODULES_DIR`。
+
+```python
+# deps.py 中的常量定义
+MODULES_DIR = os.environ.get("EASYSERVER_MODULES_DIR", "/easyserver_data/modules")
+MODULES_TEMPLATE_DIR = os.environ.get("EASYSERVER_MODULES_TEMPLATE_DIR", "/app/modules_template")
+```
 
 ### 模块安装流程
 
@@ -241,22 +253,40 @@ EasyServer 支持多域名管理，通过 `config.yaml` 中的 `domains[]` 数�
 
 ### 容器化
 
-管理引擎自身也容器化运行，通过挂载 Docker socket 操作其他容器：
+EasyServer 采用**自包含镜像**架构：代码、前端构建产物、模块模板、运维脚本、Docker CLI 全部打包在镜像内部，宿主机仅挂载运行时数据目录。管理引擎通过挂载 Docker socket 操作其他容器。
 
 ```yaml
 # docker-compose.yml（根目录）
 services:
   easyserver-core:
-    build: ./core
+    image: easyserver/core:latest
+    build:
+      context: .            # 构建上下文为项目根目录
+      dockerfile: core/Dockerfile
     container_name: easyserver-core
     ports:
-      - "127.0.0.1:9800:9800"
+      - "${BIND_ADDRESS:-127.0.0.1}:8900:8000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/app
-      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # Docker socket（只读）
+      - ${DATA_DIR:-./data}:/data                      # 数据持久化
+      - ${PROJECT_ROOT:-./easyserver-data}:/easyserver_data  # 模块运行时目录
+    environment:
+      - EASYSERVER_ROOT=/app
+      - EASYSERVER_MODULES_DIR=/easyserver_data/modules
+      - DATA_DIR=/data
+      - PROJECT_ROOT_HOST=${PROJECT_ROOT:-./easyserver-data}  # 宿主机路径（供 docker compose 使用）
+      - DATA_DIR_HOST=${DATA_DIR:-./data}                 # 宿主机数据路径
+    env_file:
+      - .env
     restart: unless-stopped
 ```
+
+**关键设计说明**：
+
+- **无源码挂载**：镜像内代码只读，更新时重新 `docker compose build` 即可，宿主机文件不会被意外修改
+- **`PROJECT_ROOT_HOST` / `DATA_DIR_HOST`**：容器内路径（`/easyserver_data`、`/data`）与宿主机路径（`${PROJECT_ROOT}`、`${DATA_DIR}`）不同，管理引擎通过 Docker socket 调用 `docker compose` 启动模块时，需使用宿主机路径写入卷映射，因此通过这两个环境变量传递宿主机实际路径
+- **Docker CLI 内置**：镜像内通过 apt 安装 `docker-ce-cli`，不再依赖挂载宿主机 Docker 二进制文件
+- **entrypoint.sh 自动化**：容器启动时自动完成 `.env` 生成、Docker 网络创建、模块模板初始化，无需手动干预
 
 ---
 

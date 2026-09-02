@@ -1,31 +1,44 @@
 # EasyServer 核心引擎
 # 仅启动管理引擎，各服务模块通过 Web UI 或 CLI 独立管理
+#
+# 新架构说明：
+# - 代码来自镜像内部，不再挂载宿主机源码目录
+# - modules/ 等运行时文件通过 PROJECT_ROOT 卷挂载供 docker compose 使用
+# - 数据目录独立挂载到 /data
+# - 首次启动前请确保 .env 文件存在（可由 entrypoint 自动创建）
 
 services:
-  core:
+  easyserver-core:
+    image: easyserver/core:latest
     build:
-      context: ./core
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: core/Dockerfile
     container_name: easyserver-core
     restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8900:8000"
+    volumes:
+      # Docker socket（管理模块容器）
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 数据持久化
+      - ${DATA_DIR:-./data}:/data
+      # 项目文件目录（modules 提取到此目录，供 docker compose 使用）
+      - ${PROJECT_ROOT:-./easyserver-data}:/easyserver_data
+    environment:
+      - EASYSERVER_ROOT=/app
+      - EASYSERVER_MODULES_DIR=/easyserver_data/modules
+      - DATA_DIR=/data
+      - PROJECT_ROOT_HOST=${PROJECT_ROOT:-./easyserver-data}
+      - DATA_DIR_HOST=${DATA_DIR:-./data}
+      - TZ=Asia/Shanghai
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
-    ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:8900:8000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /usr/bin/docker:/usr/local/bin/docker:ro
-      - /usr/libexec/docker/cli-plugins/docker-compose:/usr/local/lib/docker/cli-plugins/docker-compose:ro
-      - .:/app:rw
-      - ${DATA_DIR:-./data}:/data
-    environment:
-      - EASYSERVER_ROOT=/app
-      - DATA_DIR=${DATA_DIR:-/app/data}
-      - TZ=Asia/Shanghai
+      start_period: 30s
     security_opt:
       - no-new-privileges:true
     logging:
@@ -33,9 +46,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    networks:
-      - easyserver-proxy
 
 networks:
-  easyserver-proxy:
-    external: true
+  default:
+    name: easyserver-proxy

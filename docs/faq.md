@@ -171,14 +171,15 @@ EasyServer 提供内置备份中心，支持本地和云端备份：
 
 ### 手动备份
 
-也可手动备份 `data/` 目录：
+也可手动备份数据目录和模块运行时文件：
 
 ```bash
 # 完整备份（推荐定期执行）
+# Docker 部署模式：数据在 ${DATA_DIR}（宿主机默认为 ./data），模块运行时文件在 ${PROJECT_ROOT}/modules/
 tar -czf easyserver-backup-$(date +%Y%m%d).tar.gz \
-  ~/easyserver/data/ \
-  ~/easyserver/.env \
-  ~/easyserver/modules/
+  ${DATA_DIR:-./data}/ \
+  .env \
+  ${PROJECT_ROOT:-.}/modules/
 ```
 
 ### 各模块数据说明
@@ -258,7 +259,7 @@ A: 执行 `dig NS your-domain.com +short`，如果返回的域名服务器包含
 ```bash
 cd ~/easyserver
 git pull
-docker compose build core
+docker compose build
 docker compose up -d
 ```
 

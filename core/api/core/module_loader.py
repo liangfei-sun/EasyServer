@@ -1,5 +1,8 @@
 """
 EasyServer Module Loader
+
+模块发现与元数据加载。扫描路径指向模块工作目录（MODULES_DIR），
+支持从宿主机卷映射的 modules/ 目录动态发现所有可用模块。
 """
 import yaml
 from pathlib import Path
@@ -7,9 +10,12 @@ from typing import Optional
 
 
 class ModuleLoader:
-    def __init__(self, project_root: str):
-        self.project_root = Path(project_root)
-        self.modules_dir = self.project_root / "modules"
+    def __init__(self, modules_dir: str):
+        """
+        Args:
+            modules_dir: 模块工作目录路径（如 /easyserver_data/modules）
+        """
+        self.modules_dir = Path(modules_dir)
         self.registry_file = self.modules_dir / "_registry.yaml"
 
     def _load_yaml(self, path: Path) -> dict:

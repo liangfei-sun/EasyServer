@@ -208,8 +208,8 @@ resources:
 ### 必须遵守的规范
 
 1. **容器名**：统一前缀 `easyserver-`，格式为 `easyserver-{module_id}`，确保服务发现机制能正确识别
-2. **数据路径**：使用 `${DATA_DIR}/<module>/` 变量。模块数据必须放在 `${DATA_DIR}/<id>/` 下——卸载时选择"删除数据"将按 docker-compose.yml 中 volumes 解析的宿主路径删除 `${DATA_DIR}/<id>/` 及 `modules/<id>/` 下的数据目录（`conf.d`、`templates`、`scripts` 等配置目录除外）；禁止将 `${DATA_DIR}` 根路径挂载为业务数据（卸载时会被安全规则跳过，数据将无法随卸载删除）
-3. **宿主机路径**：涉及宿主机路径挂载时，必须使用 `${PROJECT_ROOT:-/home/lf/easyserver}` 前缀的绝对路径，禁止使用 `./` 相对路径（因为管理引擎从容器内执行 docker compose，相对路径会解析错误）
+2. **数据路径**：使用 `${DATA_DIR}/<module>/` 变量。模块数据必须放在 `${DATA_DIR}/<id>/` 下——卸载时选择“删除数据”将按 docker-compose.yml 中 volumes 解析的宿主路径删除 `${DATA_DIR}/<id>/` 及 `modules/<id>/` 下的数据目录（`conf.d`、`templates`、`scripts` 等配置目录除外）；禁止将 `${DATA_DIR}` 根路径挂载为业务数据（卸载时会被安全规则跳过，数据将无法随卸载删除）。Docker 部署模式下 `DATA_DIR` 默认为 `/data`（容器内路径），通过 docker-compose volume 映射到宿主机实际目录
+3. **宿主机路径**：涉及宿主机路径挂载时，必须使用 `${PROJECT_ROOT}` 前缀的绝对路径，禁止使用 `./` 相对路径（因为管理引擎从容器内执行 docker compose，相对路径会解析错误）。`PROJECT_ROOT` 始终由 `.env` 文件提供，无需设置默认值——Docker 模式下为 `/easyserver_data`，宿主机模式下为实际项目路径
 4. **端口绑定**：使用 `${BIND_ADDRESS:-127.0.0.1}` 变量，支持访问模式切换
 5. **日志限制**：必须添加 `max-size: "10m"`, `max-file: "3"`
 6. **时区**：统一 `TZ=Asia/Shanghai`

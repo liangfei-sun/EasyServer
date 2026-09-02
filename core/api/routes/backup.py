@@ -5,9 +5,10 @@ EasyServer Backup API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from ..core.deps import PROJECT_ROOT, get_config_manager, get_docker_manager
+from ..core.deps import get_config_manager, get_docker_manager
 import asyncio
 import json
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -22,7 +23,7 @@ class ScheduleUpdate(BaseModel):
 @router.get("/status")
 async def backup_status():
     """获取备份状态和历史"""
-    data_dir = Path(PROJECT_ROOT) / "data"
+    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
     backups_dir = data_dir / "backups"
     repo_dir = backups_dir / "restic-repo"
 

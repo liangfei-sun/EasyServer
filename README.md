@@ -32,14 +32,16 @@ curl -fsSL https://raw.githubusercontent.com/liangfei-sun/EasyServer/main/script
 ```bash
 git clone git@github.com:liangfei-sun/EasyServer.git
 cd easyserver
-cp .env.example .env
-# 编辑 .env 配置你的域名和参数
-nano .env
 
-# 创建网络并启动
-docker network create easyserver-proxy
+# 构建自包含镜像并启动（entrypoint 自动完成以下初始化）：
+# - 生成 .env 配置文件（如不存在）
+# - 创建 Docker 网络 easyserver-proxy
+# - 初始化模块模板到宿主机目录
+docker compose build
 docker compose up -d
 ```
+
+> **说明**：采用自包含镜像架构，代码、前端、模块模板、运维脚本均打包在镜像内部，宿主机仅挂载运行时数据目录。首次启动时 `entrypoint.sh` 会自动完成所有初始化，无需手动操作。
 
 ### 访问管理面板
 
@@ -67,8 +69,9 @@ docker compose up -d
 
 ```
 easyserver/
-├── docker-compose.yml          # 核心引擎（管理面板）
+├── docker-compose.yml          # 核心引擎编排（自包含镜像，不挂载源码）
 ├── .env.example                # 环境变量模板
+├── .dockerignore               # Docker 构建排除规则
 ├── scripts/
 │   ├── install.sh              # 一键安装脚本
 │   └── manage.sh               # CLI 管理工具
@@ -81,9 +84,10 @@ easyserver/
 │   │       ├── views/          # 页面组件（含 network/ 子组件）
 │   │       ├── composables/    # 组合式函数（useMobile）
 │   │       └── router/         # 路由配置
-│   ├── Dockerfile
+│   ├── Dockerfile              # 多阶段构建：前端编译 + Python 运行时（含 Docker CLI）
+│   ├── entrypoint.sh           # 容器入口脚本（自动初始化 .env / 网络 / 模块模板）
 │   └── requirements.txt
-├── modules/                    # 服务模块
+├── modules/                    # 服务模块（构建时复制为镜像内 modules_template/）
 │   ├── _registry.yaml          # 模块注册表
 │   ├── nginx/
 │   ├── notediscovery/
@@ -97,13 +101,16 @@ easyserver/
 
 ## CLI 管理
 
+EasyServer 采用自包含镜像架构，脚本位于容器内 `/app/scripts/` 目录，通过 `docker exec` 调用：
+
 ```bash
-./scripts/manage.sh start       # 启动所有服务
-./scripts/manage.sh stop        # 停止所有服务
-./scripts/manage.sh status      # 查看状态
-./scripts/manage.sh logs        # 查看日志
-./scripts/manage.sh backup      # 备份数据
-./scripts/manage.sh svc nginx restart  # 操作单个服务
+# Docker 部署模式（推荐）
+docker exec easyserver-core bash /app/scripts/manage.sh start       # 启动所有服务
+docker exec easyserver-core bash /app/scripts/manage.sh stop        # 停止所有服务
+docker exec easyserver-core bash /app/scripts/manage.sh status      # 查看状态
+docker exec easyserver-core bash /app/scripts/manage.sh logs        # 查看日志
+docker exec easyserver-core bash /app/scripts/manage.sh backup      # 备份数据
+docker exec easyserver-core bash /app/scripts/manage.sh svc nginx restart  # 操作单个服务
 ```
 
 ## 访问模式

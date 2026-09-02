@@ -11,7 +11,7 @@ from ..core.docker_manager import DockerManager
 from ..core.module_loader import ModuleLoader
 from ..core.cloudflare_api import CloudflareClient, CloudflareAPIError
 from ..core.alidns_api import AliyunDNSClient, AliyunDNSAPIError
-from ..core.deps import PROJECT_ROOT, get_config_manager, get_docker_manager, get_module_loader
+from ..core.deps import get_config_manager, get_docker_manager, get_module_loader
 from ..core.background_tasks import trigger_dns_sync_background
 from .dns import _get_aliyun_credentials
 import logging

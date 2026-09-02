@@ -5,13 +5,12 @@ EasyServer Modules API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from ..core.module_loader import ModuleLoader
+from ..core.deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_config_manager, get_docker_manager, get_module_loader
 from ..core.config_manager import ConfigManager
 from ..core.docker_manager import DockerManager
-from ..core.nginx_generator import NginxGenerator
+from ..core.module_loader import ModuleLoader
 import asyncio
 import logging
-import os
 import shutil
 import time
 from pathlib import Path
@@ -19,8 +18,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/modules", tags=["modules"])
-
-PROJECT_ROOT = os.environ.get("EASYSERVER_ROOT", "/app")
 
 # ---------------------------------------------------------------------------
 # 安装任务表（内存存储）
@@ -129,16 +126,16 @@ async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager
         _cleanup_install_tasks()
 
 
-def _get_module_loader():
-    return ModuleLoader(PROJECT_ROOT)
-
-
 def _get_config_manager():
-    return ConfigManager(PROJECT_ROOT)
+    return get_config_manager()
 
 
 def _get_docker_manager():
-    return DockerManager(PROJECT_ROOT)
+    return get_docker_manager()
+
+
+def _get_module_loader():
+    return get_module_loader()
 
 
 class InstallRequest(BaseModel):
@@ -355,7 +352,8 @@ async def _update_nginx_config(cm: ConfigManager, ml: ModuleLoader) -> str | Non
             if metadata:
                 installed_modules.append(metadata)
 
-        ng = NginxGenerator(PROJECT_ROOT)
+        from ..core.nginx_generator import NginxGenerator
+        ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
         ng.generate_all(config, installed_modules)
         await ng.async_reload_nginx()
     except Exception as e:

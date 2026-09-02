@@ -80,12 +80,14 @@ cloudflare_tunnel:
 
 | 变量 | 示例值 | 说明 |
 |------|--------|------|
-| `PROJECT_ROOT` | `/home/lf/easyserver` | 项目根目录（绝对路径） |
-| `DATA_DIR` | `/home/lf/easyserver/data` | 数据持久化目录 |
+| `PROJECT_ROOT` | Docker 模式：`/easyserver_data`；宿主机模式：`/home/user/easyserver` | 项目根目录（Docker 模式为容器内路径，宿主机模式为实际路径） |
+| `DATA_DIR` | Docker 模式：`/data`；宿主机模式：`/home/user/easyserver/data` | 数据持久化目录（Docker 模式为容器内路径，通过 volume 映射到宿主机） |
 | `DOMAIN` | `example.com` | 主域名 |
 | `ACCESS_MODE` | `domain` | 访问模式（同 config.yaml） |
 | `HTTPS_PORT` | `8443` | HTTPS 端口 |
 | `SSL_EMAIL` | `admin@example.com` | Let's Encrypt 邮箱 |
+
+> **路径说明**：Docker 部署模式下，`PROJECT_ROOT` 和 `DATA_DIR` 为容器内路径（分别为 `/easyserver_data` 和 `/data`），通过 volume 映射到宿主机实际目录。宿主机部署模式下，这两个变量为宿主机上的实际路径，由 `.env` 文件提供。
 
 ### 子域名前缀
 

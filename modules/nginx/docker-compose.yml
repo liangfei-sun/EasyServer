@@ -7,10 +7,10 @@ services:
     container_name: easyserver-nginx
     network_mode: ${NGINX_NETWORK_MODE:-host}
     volumes:
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/conf.d:/etc/nginx/conf.d
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/ssl:/etc/nginx/ssl
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/log:/var/log/nginx
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/nginx/acme-challenge:/acme-challenge
+      - ${PROJECT_ROOT}/modules/nginx/conf.d:/etc/nginx/conf.d
+      - ${PROJECT_ROOT}/modules/nginx/ssl:/etc/nginx/ssl
+      - ${PROJECT_ROOT}/modules/nginx/log:/var/log/nginx
+      - ${PROJECT_ROOT}/modules/nginx/acme-challenge:/acme-challenge
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped

@@ -16,8 +16,8 @@ services:
     volumes:
       - ${DATA_DIR}:/data:ro
       - ${DATA_DIR}/backups:/backups
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/.env:/config/.env:ro
-      - ${PROJECT_ROOT:-/home/lf/easyserver}/modules/backup/scripts:/scripts:ro
+      - ${PROJECT_ROOT}/.env:/config/.env:ro
+      - ${PROJECT_ROOT}/modules/backup/scripts:/scripts:ro
     security_opt:
       - no-new-privileges:true
     networks:

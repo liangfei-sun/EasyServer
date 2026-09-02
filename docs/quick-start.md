@@ -21,7 +21,7 @@ EasyServer 是一个面向个人用户的一站式服务器部署方案。只需
 用户浏览器
     ↓
 Nginx（反向代理 + SSL，可选模块）
-    ├── → 管理引擎（:9800）
+    ├── → 管理引擎（:8900）
     ├── → Uptime Kuma（:3001）
     ├── → Jellyfin（:8096）
     ├── → Joplin（:22300）
@@ -105,23 +105,49 @@ EasyServer 支持四种外网访问方式：
 
 ### 第一步：系统安装
 
-1. 在 Ubuntu 服务器上克隆项目
-2. 运行安装脚本 `bash scripts/install.sh`
-3. 等待 Docker 和依赖安装完成
+EasyServer 支持两种安装方式：
 
-### 第二步：启动管理引擎
+**方式一：Docker 一键部署（推荐）**
+
+只需克隆项目并构建镜像，`entrypoint.sh` 会自动完成所有初始化（生成 `.env`、创建 Docker 网络、初始化模块模板）：
 
 ```bash
-cd ~/easyserver
-docker compose build   # 重建容器以安装新依赖
+git clone git@github.com:liangfei-sun/EasyServer.git
+cd easyserver
+docker compose build
 docker compose up -d
 ```
 
-> **提示**：更新 EasyServer 时，若后端依赖有变更，需先执行 `docker compose build` 重建容器。
+**方式二：安装脚本**
+
+运行安装脚本，自动检测并安装 Docker、克隆项目、初始化配置：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/liangfei-sun/EasyServer/main/scripts/install.sh | bash
+# 或手动运行：
+bash scripts/install.sh
+```
+
+### 第二步：启动管理引擎
+
+若已通过 Docker 方式完成第一步，引擎已自动启动，可跳过此步。
+
+若使用安装脚本或需手动重建：
+
+```bash
+cd ~/easyserver
+docker compose build   # 重建镜像（构建上下文为项目根目录，Dockerfile 为 core/Dockerfile）
+docker compose up -d
+```
+
+> **提示**：
+> - 更新 EasyServer 时，若镜像内容有变更，需先执行 `docker compose build` 重建镜像
+> - `.env` 文件由 entrypoint 自动生成（如不存在），无需手动创建
+> - Docker 网络 `easyserver-proxy` 由 entrypoint 自动创建，无需手动执行 `docker network create`
 
 ### 第三步：访问管理面板
 
-- 本地访问：`http://localhost:9800`
+- 本地访问：`http://localhost:8900`
 - 外网访问：根据你的网络配置选择域名或 IPv6
 
 ### 第四步：完成初始化向导

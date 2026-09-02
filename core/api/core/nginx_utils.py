@@ -20,9 +20,9 @@ def regenerate_nginx_config(cm, restart: bool = False) -> bool:
     """
     try:
         from .nginx_generator import NginxGenerator
-        from .deps import PROJECT_ROOT, get_module_loader
+        from .deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_module_loader
 
-        ng = NginxGenerator(PROJECT_ROOT)
+        ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
         ml = get_module_loader()
         installed = ml.get_installed_modules()
         ng.generate_all(cm.load_config(), installed)
@@ -53,9 +53,9 @@ async def async_regenerate_nginx_config(cm, restart: bool = False) -> bool:
     """
     try:
         from .nginx_generator import NginxGenerator
-        from .deps import PROJECT_ROOT, get_module_loader
+        from .deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_module_loader
 
-        ng = NginxGenerator(PROJECT_ROOT)
+        ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
         ml = get_module_loader()
         installed = ml.get_installed_modules()
         ng.generate_all(cm.load_config(), installed)

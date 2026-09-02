@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 
 from ..core.config_manager import ConfigManager
-from ..core.deps import PROJECT_ROOT, get_config_manager
+from ..core.deps import PROJECT_ROOT, MODULES_DIR, get_config_manager
 from ..core.dns_providers import DNS_PROVIDERS, get_provider, is_mask_value, MASK_PREFIX
 from ..core.nginx_utils import async_regenerate_nginx_config
 
@@ -36,7 +36,7 @@ async def _check_ssl_status(domain: str) -> dict:
     """检测 SSL 证书状态"""
     if not domain:
         return {"ssl_valid": False, "ssl_expiry": "", "ssl_domain": ""}
-    cert_path = Path(PROJECT_ROOT) / "modules" / "nginx" / "ssl" / domain / "fullchain.cer"
+    cert_path = Path(MODULES_DIR) / "nginx" / "ssl" / domain / "fullchain.cer"
     if not cert_path.exists():
         return {"ssl_valid": False, "ssl_expiry": "", "ssl_domain": domain}
     try:
@@ -130,7 +130,7 @@ def _write_acme_env_file(cm: ConfigManager, dns_creds: dict):
             val = (dns_creds.get(pid, {}) or {}).get(f["key"], "")
             if val and not is_mask_value(val):
                 lines.append(f"{f.get('acme_env', f['env'])}={val}")
-    env_file = Path(PROJECT_ROOT) / "modules" / "acme" / "dns-credentials.env"
+    env_file = Path(MODULES_DIR) / "acme" / "dns-credentials.env"
     env_file.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(lines) + ("\n" if lines else "")
     env_file.write_text(content, encoding="utf-8")

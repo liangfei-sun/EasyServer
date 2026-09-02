@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from ..core.config_manager import ConfigManager
 from ..core.module_loader import ModuleLoader
 from ..core.nginx_generator import NginxGenerator
-from ..core.deps import PROJECT_ROOT, get_config_manager, get_module_loader
+from ..core.deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_config_manager, get_module_loader
 import os
 
 router = APIRouter(prefix="/api/nginx", tags=["nginx"])
@@ -17,7 +17,7 @@ async def generate_nginx_config():
     """根据当前配置重新生成 Nginx 配置"""
     cm = get_config_manager()
     ml = get_module_loader()
-    ng = NginxGenerator(PROJECT_ROOT)
+    ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
 
     config = cm.load_config()
     installed_ids = cm.get_installed_modules()
@@ -38,7 +38,7 @@ async def generate_nginx_config():
 @router.post("/reload")
 async def reload_nginx():
     """重载 Nginx"""
-    ng = NginxGenerator(PROJECT_ROOT)
+    ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
     success = await ng.async_reload_nginx()
     if success:
         return {"success": True, "message": "Nginx 已重载"}
@@ -49,7 +49,7 @@ async def reload_nginx():
 @router.get("/config/sites")
 async def get_sites_config():
     """获取当前 sites.conf 内容"""
-    sites_file = os.path.join(PROJECT_ROOT, "modules", "nginx", "conf.d", "sites.conf")
+    sites_file = os.path.join(MODULES_DIR, "nginx", "conf.d", "sites.conf")
     if os.path.exists(sites_file):
         with open(sites_file, "r") as f:
             return {"content": f.read()}
@@ -59,7 +59,7 @@ async def get_sites_config():
 @router.get("/config/default")
 async def get_default_config():
     """获取当前 default.conf 内容"""
-    default_file = os.path.join(PROJECT_ROOT, "modules", "nginx", "conf.d", "default.conf")
+    default_file = os.path.join(MODULES_DIR, "nginx", "conf.d", "default.conf")
     if os.path.exists(default_file):
         with open(default_file, "r") as f:
             return {"content": f.read()}

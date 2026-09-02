@@ -4,12 +4,15 @@ EasyServer Docker Manager
 import asyncio
 import json
 import logging
+import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+from .module_loader import ModuleLoader
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +40,13 @@ class DockerManager:
                 return {"type": diag_type, "hint": hint}
         return {"type": "unknown", "hint": ""}
 
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str, modules_dir: str = ""):
         self.project_root = Path(project_root)
-        self.modules_dir = self.project_root / "modules"
+        # 模块工作目录：优先使用传入的 modules_dir，否则回退到 {project_root}/modules
+        if modules_dir:
+            self.modules_dir = Path(modules_dir)
+        else:
+            self.modules_dir = self.project_root / "modules"
 
     def _get_compose_file(self, module_id: str) -> Path:
         compose_file = self.modules_dir / module_id / "docker-compose.yml"
@@ -50,6 +57,22 @@ class DockerManager:
     def _get_env_file(self) -> Optional[Path]:
         env_file = self.project_root / ".env"
         return env_file if env_file.exists() else None
+
+    def _get_host_env_overrides(self) -> dict:
+        """当运行在 Docker 容器内时，返回需要用宿主机路径覆盖的环境变量映射。
+
+        Docker daemon 在宿主机上解析 volume 路径，需要用宿主机路径覆盖 .env 中的容器内路径。
+        通过 PROJECT_ROOT_HOST / DATA_DIR_HOST 环境变量（由 core 的 docker-compose.yml 注入）
+        覆盖 .env 中的 PROJECT_ROOT / DATA_DIR。
+        """
+        overrides = {}
+        host_project_root = os.environ.get("PROJECT_ROOT_HOST")
+        host_data_dir = os.environ.get("DATA_DIR_HOST")
+        if host_project_root:
+            overrides["PROJECT_ROOT"] = host_project_root
+        if host_data_dir:
+            overrides["DATA_DIR"] = host_data_dir
+        return overrides
 
     def _build_compose_cmd(self, module_id: str, *args) -> list:
         """构建 docker compose 命令列表"""
@@ -63,9 +86,13 @@ class DockerManager:
 
     def _run_compose(self, module_id: str, *args, check: bool = True) -> subprocess.CompletedProcess:
         cmd = self._build_compose_cmd(module_id, *args)
-        # cwd 设为模块目录，确保 compose 中相对路径（如 ./scripts）正确解析
         module_dir = self.modules_dir / module_id
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(module_dir), timeout=120)
+        # 注入宿主机路径覆盖（Docker socket 模式下 volume 需要宿主机路径）
+        env = None
+        overrides = self._get_host_env_overrides()
+        if overrides:
+            env = {**os.environ, **overrides}
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(module_dir), timeout=120, env=env)
         if check and result.returncode != 0:
             raise RuntimeError(f"Docker compose 命令失败: {result.stderr}")
         return result
@@ -73,11 +100,17 @@ class DockerManager:
     async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120) -> tuple:
         """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)"""
         cmd = self._build_compose_cmd(module_id, *args)
+        # 注入宿主机路径覆盖（Docker socket 模式下 volume 需要宿主机路径）
+        env = None
+        overrides = self._get_host_env_overrides()
+        if overrides:
+            env = {**os.environ, **overrides}
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(self.modules_dir / module_id)
+            cwd=str(self.modules_dir / module_id),
+            env=env
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         stdout_str = stdout.decode()
@@ -375,8 +408,8 @@ class DockerManager:
         return matched
 
     def get_all_status(self) -> list:
-        from .module_loader import ModuleLoader
-        loader = ModuleLoader(str(self.project_root))
+        from .deps import MODULES_DIR
+        loader = ModuleLoader(MODULES_DIR)
         installed = loader.get_installed_modules()
         env = self._load_env_dict()  # 只读一次
         # 单次获取所有容器状态

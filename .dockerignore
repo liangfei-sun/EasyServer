@@ -1,0 +1,14 @@
+.git
+data
+easyserver-data
+.env
+.env.bak
+.env.tmp
+modules/backup/data
+modules/filebrowser/data
+__pycache__
+*.pyc
+node_modules
+*.md
+data.bak*
+.qoder

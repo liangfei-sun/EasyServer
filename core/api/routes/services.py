@@ -5,7 +5,7 @@ EasyServer Services API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from ..core.deps import PROJECT_ROOT, get_config_manager, get_docker_manager, get_module_loader
+from ..core.deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_config_manager, get_docker_manager, get_module_loader
 import re
 import asyncio
 import json
@@ -118,7 +118,7 @@ async def update_service_port(module_id: str, port: int):
     # 端口修改后触发 Nginx 配置重新生成
     try:
         from ..core.nginx_generator import NginxGenerator
-        ng = NginxGenerator(PROJECT_ROOT)
+        ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
         installed_modules = ml.get_installed_modules()
         ng.generate_all(cm.load_config(), installed_modules)
         await ng.async_reload_nginx()
