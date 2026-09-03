@@ -50,14 +50,14 @@ Exception: read /root/.ddns_go_config.yaml: is a directory
 
 应用捕获异常后继续存活并监听 9876，界面看起来一切正常，**但配置永远保存不了（写路径是目录）→ DDNS 功能不可用**，且 UI 上无从得知原因（容器无 healthcheck、引擎 install 恒 success，缺陷 I）。
 
-**实测修复方式**（安装前预创建真文件）：
+**实测修复方式**（安装前预创建真文件；命令中 `<DATA_DIR>` 默认安装为容器内路径映射 `/data`，按安装指南 4.2 自定义 DATA_DIR 的用户请替换）：
 
 ```bash
-sudo mkdir -p /data/ddns-go/config
-sudo touch /data/ddns-go/config/.ddns_go_config.yaml    # 先建真文件再安装/重装
+sudo mkdir -p <DATA_DIR>/ddns-go/config
+sudo touch <DATA_DIR>/ddns-go/config/.ddns_go_config.yaml    # 先建真文件再安装/重装
 ```
 
-若已中招：卸载模块 → `sudo rm -rf /data/ddns-go`（root 属主需 sudo）→ 按上式预创建文件 → 重新安装。
+若已中招：卸载模块 → `sudo rm -rf <DATA_DIR>/ddns-go`（root 属主需 sudo）→ 按上式预创建文件 → 重新安装。
 
 ## 4. 启动与验证
 
@@ -89,13 +89,13 @@ curl -sL -o /dev/null -w '%{url_effective} %{http_code}' http://127.0.0.1:9876/
 ## 7. 卸载
 
 - 面板卸载或 `POST /api/modules/uninstall`；实测返回 `data_removed:true, removed_paths:["/app/data/ddns-go"]`
-- **实测注意**：宿主 `/data/ddns-go` 为 **root:root 属主残留**，普通用户无法自行删除，需 `sudo rm -rf`（缺陷 J）
+- **实测注意**：宿主 `<DATA_DIR>/ddns-go`（默认 `/data/ddns-go`）为 **root:root 属主残留**，普通用户无法自行删除，需 `sudo rm -rf`（缺陷 J）
 - **实测警告（缺陷 D）**：卸载会**自动删除 `jeessy/ddns-go:v6.7.0` 镜像**，重装需重新拉取
 
 ## 8. FAQ
 
 **Q：IP 变化了但 DNS 没有更新？**
-先确认 3.2 的陷阱已修复（`/data/ddns-go/config/.ddns_go_config.yaml` 必须是文件而非目录，日志无 `is a directory` 报错）；再检查 DNS 服务商 API 密钥是否正确、查看 DDNS-Go 日志。
+先确认 3.2 的陷阱已修复（`<DATA_DIR>/ddns-go/config/.ddns_go_config.yaml` 必须是文件而非目录，日志无 `is a directory` 报错）；再检查 DNS 服务商 API 密钥是否正确、查看 DDNS-Go 日志。
 
 **Q：配置页面无法访问？**
 确认 9876 端口未被占用（host 模式），检查防火墙。WSL2 mirrored 环境注意 Windows 侧占用需用 netstat.exe 排查。

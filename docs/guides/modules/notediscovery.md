@@ -45,12 +45,12 @@ Are you trying to mount a directory onto a file (or vice-versa)?
 
 根因（缺陷 U）：compose 将 `${DATA_DIR}/notediscovery/config.yaml` 以**单文件方式挂载**到容器 `/app/config.yaml`，引擎不预创建该文件 → Docker 自动创建**同名目录** → 挂载冲突，`up` 直接失败（比 ddns-go 陷阱更彻底——容器都起不来）。
 
-**实测变通与边界**：
+**实测变通与边界**（命令中 `<DATA_DIR>` 默认安装为容器内路径映射 `/data`，按安装指南 4.2 自定义 DATA_DIR 的用户请替换）：
 
 ```bash
 # 变通：预创建空配置文件后重装（install 可 success）
-sudo mkdir -p /data/notediscovery
-sudo touch /data/notediscovery/config.yaml
+sudo mkdir -p <DATA_DIR>/notediscovery
+sudo touch <DATA_DIR>/notediscovery/config.yaml
 ```
 
 实测 touch 空文件后 install 成功、容器 `Up (health: starting)`，**但应用随即崩溃**——空 config.yaml 解析为 None，Python 启动即抛 `TypeError: 'NoneType' object is not subscriptable`（`config['app']['version']`）。
@@ -62,7 +62,7 @@ sudo touch /data/notediscovery/config.yaml
 sg docker -c "docker create --name nd-tmp ghcr.io/gamosoft/notediscovery:latest"
 sg docker -c "docker cp nd-tmp:/app/config.yaml /tmp/config.yaml"
 sg docker -c "docker rm nd-tmp"
-sudo cp /tmp/config.yaml /data/notediscovery/config.yaml   # 覆盖空文件后再安装/启动
+sudo cp /tmp/config.yaml <DATA_DIR>/notediscovery/config.yaml   # 覆盖空文件后再安装/启动
 ```
 
 > 以上提取命令为按缺陷修复方向整理的操作路径，其中"install 前预创建文件可行"为实测结论；从镜像提取默认配置的命令未在 QA 中执行，如失败请以容器内实际路径为准排查。

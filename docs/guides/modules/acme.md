@@ -57,7 +57,7 @@ docker pull neilpang/acme.sh:v3.0.9
 
 ## 4. 启动与验证
 
-本指南验证到启动层（凭据校验与降级断言），以下为实测验证项：
+本指南验证到启动层（凭据校验与降级断言），以下为实测验证项（示例中 API 端口 `8901` 为 QA 实测环境经 `docker-compose.override.yml` 修改后的端口，默认安装请使用 `8900`；compose 命令中 `<PROJECT_ROOT>` 默认安装为容器内路径映射 `/easyserver_data`，按安装指南 4.2 自定义 PROJECT_ROOT 的用户请替换）：
 
 ```bash
 # 1. 校验接口可达（实测 200）
@@ -71,7 +71,7 @@ curl -s -X POST -H "Authorization: Bearer <你的管理Token>" -H 'Content-Type:
 # 实测输出：{"detail":"字段「DNS 提供商」为必填项"}   (HTTP 400)
 
 # 3. compose 语法断言（无凭据文件时失败——缺陷 L 实证）
-sg docker -c "docker compose -f /easyserver_data/modules/acme/docker-compose.yml config"
+sg docker -c "docker compose -f <PROJECT_ROOT>/modules/acme/docker-compose.yml config"
 # 实测输出：env file /easyserver_data/modules/acme/dns-credentials.env not found
 ```
 

@@ -18,6 +18,8 @@ Frigate 是开源 AI 视频监控系统：接入 IP 摄像头或旧手机（IP W
 | 容器名 | `easyserver-frigate` |
 | 内置 healthcheck | 无（引擎靠模块健康检查 URL `/api/version` 探测） |
 
+> 端口加注：上游 README 模块表写的 `8971` 与 module.yaml 实际默认 `5000` 不符，以实测为准（本表及全文端口信息均基于 module.yaml 与实测）。
+
 ## 2. 前置条件
 
 - 核心引擎运行中；无硬依赖模块（soft_depends_on: nginx、acme）
@@ -42,7 +44,7 @@ Frigate 是开源 AI 视频监控系统：接入 IP 摄像头或旧手机（IP W
 **面板/API 安装（实测成功）**：`POST /api/modules/install` 实测 **success**——ghcr 镜像在本地命中后 pull 直连秒过（ghcr.io 不经 Docker Hub mirror 白名单，不受 denied 问题影响）。面板安装 frigate 为 13 模块中少数全流程可用路径。
 
 ```bash
-# 面板安装，或等价 API 调用：
+# 面板安装，或等价 API 调用（示例端口 8901 为 QA 实测环境经 docker-compose.override.yml 修改后的端口，默认安装请使用 8900）：
 curl -s -X POST -H "Authorization: Bearer <你的管理Token>" -H 'Content-Type: application/json' \
   -d '{"module_id":"frigate","config":{"FRIGATE_PORT":15000,"FRIGATE_RTSP_PORT":18554}}' \
   http://localhost:8901/api/modules/install
@@ -52,7 +54,7 @@ curl -s -X POST -H "Authorization: Bearer <你的管理Token>" -H 'Content-Type:
 **手动路径（等价可用）**：
 
 ```bash
-cd <项目根目录>/modules/frigate   # 或运行时目录 /easyserver_data/modules/frigate
+cd <PROJECT_ROOT>/modules/frigate   # <PROJECT_ROOT> 默认安装为容器内路径映射 /easyserver_data，按安装指南 4.2 自定义 PROJECT_ROOT 的用户请替换
 docker pull ghcr.io/blakeblackshear/frigate:stable
 sg docker -c "FRIGATE_PORT=15000 FRIGATE_RTSP_PORT=18554 DATA_DIR=<数据目录> \
   docker compose -f docker-compose.yml up -d"

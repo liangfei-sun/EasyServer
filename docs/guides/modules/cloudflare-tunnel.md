@@ -44,6 +44,8 @@ Cloudflare Tunnel 通过 cloudflared 出站连接将本地服务安全发布到�
 **有 token 时（推荐路径）**：面板「内网穿透」页面一键接入（粘贴 API Token 自动创建隧道并启动模块），或手动安装（粘贴 Tunnel Token 后 `POST /api/modules/install`）。两者均未在 QA 中执行真实建链（禁触）。
 
 ```bash
+# 注：示例端口 8901 为 QA 实测环境经 docker-compose.override.yml 修改后的端口，默认安装请使用 8900
+
 # 校验接口可达（实测 200）
 curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer <你的管理Token>" \
   http://localhost:8901/api/modules/cloudflare-tunnel/validate

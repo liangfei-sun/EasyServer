@@ -43,17 +43,17 @@ Nginx 反向代理是所有服务的统一入口，提供 SSL 终止、按子域
 1. **证书缺失（必现）**：站点配置引用 `/etc/nginx/ssl/<域名>/fullchain.cer`，未签发证书时 nginx 启动即崩（`cannot load certificate`）。
 2. **80 端口被占（环境相关）**：模板硬编码 `listen 80`，端口被占时 `bind() failed`。
 
-**实测修复步骤**（宿主执行）：
+**实测修复步骤**（宿主执行；命令中 `<PROJECT_ROOT>` 默认安装为容器内路径映射 `/easyserver_data`，按安装指南 4.2 自定义 PROJECT_ROOT 的用户请替换）：
 
 ```bash
 # ① 生成自签证书临时救急（正式证书由 acme 模块签发后替换）
 sudo openssl req -x509 -newkey rsa:2048 -keyout <域名>.key -out fullchain.cer -days 1 -nodes -subj "/CN=<你的域名>"
-sudo mkdir -p /easyserver_data/modules/nginx/ssl/<你的域名>
-sudo mv fullchain.cer <域名>.key /easyserver_data/modules/nginx/ssl/<你的域名>/
+sudo mkdir -p <PROJECT_ROOT>/modules/nginx/ssl/<你的域名>
+sudo mv fullchain.cer <域名>.key <PROJECT_ROOT>/modules/nginx/ssl/<你的域名>/
 
 # ② 若 80 被占，改 listen 端口（sites.conf 与 default.conf 各一处）
-sudo sed -i 's/listen 80;/listen 8080;/' /easyserver_data/modules/nginx/conf.d/sites.conf
-sudo sed -i 's/listen 80 default_server;/listen 8080 default_server;/' /easyserver_data/modules/nginx/conf.d/default.conf
+sudo sed -i 's/listen 80;/listen 8080;/' <PROJECT_ROOT>/modules/nginx/conf.d/sites.conf
+sudo sed -i 's/listen 80 default_server;/listen 8080 default_server;/' <PROJECT_ROOT>/modules/nginx/conf.d/default.conf
 
 sudo docker restart easyserver-nginx
 ```
@@ -119,7 +119,7 @@ curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/
 
 ```
 # 首装 crash 根因①：证书缺失
-easyserver-nginx | nginx: [emerg] cannot load certificate "/etc/nginx/ssl/test.local/fullchain.cer": BIO_new_file() failed
+easyserver-nginx | nginx: [emerg] cannot load certificate "/etc/nginx/ssl/example.test/fullchain.cer": BIO_new_file() failed
 # 首装 crash 根因②：80 被占
 easyserver-nginx | nginx: [emerg] bind() to 0.0.0.0:80 failed (98: Address already in use)
 # 修复后验证

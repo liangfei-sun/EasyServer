@@ -40,8 +40,8 @@ FileBrowser 是轻量级 Web 文件管理器，支持上传、下载、在线预
 **实测修复步骤**（安装后立即执行）：
 
 ```bash
-# 修正数据卷属主（目录按你的实际 DATA_DIR 路径调整）
-sudo chown -R 1000:1000 /data/filebrowser-db /data/filebrowser
+# 修正数据卷属主（<DATA_DIR> 默认安装为容器内路径映射 /data，按安装指南 4.2 自定义 DATA_DIR 的用户请替换）
+sudo chown -R 1000:1000 <DATA_DIR>/filebrowser-db <DATA_DIR>/filebrowser
 # 重启容器
 sudo docker restart easyserver-filebrowser
 ```
