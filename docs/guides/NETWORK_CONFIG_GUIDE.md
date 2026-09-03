@@ -2,7 +2,7 @@
 
 > 面向用户讲清楚「网络配置」页面的每一种玩法，并如实标注 **QA 实测确认的系统行为**（含与预期不同的行为差异）。上游完整文档见 `docs/network-config.md`，本文为其场景化教程版。
 >
-> 适用版本：EasyServer 0.2.x · 实测环境：WSL2 Ubuntu 24.04，零模块基线 + JWT 认证。
+> 适用版本：EasyServer v0.3.0 · 实测环境：WSL2 Ubuntu 24.04，零模块基线 + JWT 认证。
 
 ---
 
@@ -218,14 +218,19 @@ Tunnel 要求域名托管在 Cloudflare。主域名在阿里云等别处时，�
 2. 系统自动验证 DNS 连通性，通过后 Tunnel 发布时即可选择该域名
 3. 多域名时 Tunnel 服务卡片顶部出现「目标域名」下拉选择器；单域名则自动使用
 
-> 免费域名提示（上游实测结论）：并非所有免费后缀都支持 NS 迁移到 Cloudflare（如 DigitalPlat 的 `.dpdns.org`/`.qzz.io` 支持），注册前先确认可改 NS。
+> 免费域名提示（上游文档结论）：并非所有免费后缀都支持 NS 迁移到 Cloudflare（如 DigitalPlat 的 `.dpdns.org`/`.qzz.io` 支持），注册前先确认可改 NS。
 
 ---
 
 ## 10. 端口检查（port-check）
 
 ```bash
-curl -s http://localhost:8900/api/services/port-check
+# port-check 需认证：先登录换取 Token（body 只需密码），再携带 Bearer 头调用
+TOKEN=$(curl -s -X POST http://localhost:8900/api/config/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"password":"<你的管理密码>"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8900/api/services/port-check
 ```
 
 实测返回结构：`{"has_conflict": false, "conflicts": [], ...}` 并**列出全部注册模块端口清单**（实测 10 个）。两个使用要点：
@@ -249,7 +254,7 @@ curl -s http://localhost:8900/api/services/port-check
 
 Nginx 容器监听 HTTPS 端口（默认 8443），按域名将请求转发到对应服务。反代配置由系统**自动生成与维护**（安装/卸载模块时自动增删配置块），也可手动「重新生成 Nginx 配置」。
 
-**实测已知疑点（待验证）**：生成的 `sites.conf` 中管理面板反代为 `proxy_pass http://127.0.0.1:8900`——nginx 容器运行在 `easyserver-proxy` 网络内，`127.0.0.1` 指向 **nginx 容器自身**而非核心引擎，疑似应为 `http://easyserver-core:8000`。若安装 nginx 后经域名访问面板出现 502，此处为已知嫌疑点，可通过「服务管理 → nginx → 日志」与 `/easyserver_data/modules/nginx/conf.d/sites.conf` 核对。
+**proxy_pass 语义说明（早期疑点已由模块指南 R10 实测撤销，见 `docs/guides/modules/nginx.md`）**：生成的 `sites.conf` 中管理面板反代为 `proxy_pass http://127.0.0.1:8900`——nginx 默认 **host 网络模式**下直接使用宿主网络栈，`127.0.0.1:8900` 指向宿主 loopback 上的核心引擎，语义正确；WSL2 mirrored 环境下 8900 的可达性依赖宿主侧转发，属环境差异。仅当显式改用 bridge 模式时，`127.0.0.1` 才指向 nginx 容器自身，此时需将 proxy_pass 改为容器网络地址。若安装 nginx 后经域名访问面板出现 502，可通过「服务管理 → nginx → 日志」与 `<PROJECT_ROOT>/modules/nginx/conf.d/sites.conf` 核对。
 
 ### 11.3 修改 HTTPS 端口
 
