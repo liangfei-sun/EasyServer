@@ -240,7 +240,7 @@ docker compose up -d
 docker compose ps   # STATUS 应为 Up (healthy)
 ```
 
-首次启动时 entrypoint 会自动完成初始化（实测确认）：在挂载卷内生成运行时 `.env`、创建/复用 `easyserver-proxy` Docker 网络、从镜像内置模板初始化 modules 目录（实测 14 个模块）、Uvicorn 监听 `0.0.0.0:8000`。健康检查（`GET /api/health`）通过后容器状态变为 `healthy`。
+首次启动时 entrypoint 会自动完成初始化（实测确认）：在挂载卷内生成运行时 `.env`、创建/复用 `easyserver-proxy` Docker 网络、从镜像内置模板初始化 modules 目录（实测 13 个模块）、Uvicorn 监听 `0.0.0.0:8000`。健康检查（`GET /api/health`）通过后容器状态变为 `healthy`。
 
 ### 5.5 端口冲突排查（WSL mirrored 网络模式专项）
 
@@ -264,7 +264,7 @@ netstat.exe -ano | findstr 8900
   services:
     easyserver-core:
       ports: !override
-        - "127.0.0.1:19000:8000"
+        - "127.0.0.1:8901:8000"   # 8901 为 QA 实测环境经 override 修改后的端口，默认安装为 8900
   ```
 
 - 或直接修改 `docker-compose.yml` 中的 `8900` 为其他端口。
