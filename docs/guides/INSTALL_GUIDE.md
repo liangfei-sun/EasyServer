@@ -3,6 +3,8 @@
 > 本指南基于 **WSL2 + Ubuntu 24.04 (Noble) 完整实测**编写，适用于原生 Linux 服务器与 WSL 环境，平台差异处均已标注。所有命令、版本号与系统行为均来自真实部署验证。
 >
 > 实测版本：docker-ce 29.7.2 · Docker Compose v5.5.0 · 镜像 `easyserver/core` 约 538 MB · 模块注册表共 **13 个模块**（5 个分类）。
+>
+> 基线版本 v0.3.0（commit 8116713）；上游升级端口参数化/模块数变化后本文数据需复核。
 
 ---
 
@@ -207,7 +209,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-> **注意**：README 中"`.env` 由 entrypoint 自动生成"仅指**容器内**挂载卷中的运行时配置。宿主机项目根目录下的 `.env`（compose 的 env_file）只有 `scripts/install.sh` 方式会自动创建，手动安装必须自行复制。
+> **注意**：README 中"`.env` 由 entrypoint 自动生成"仅指**容器内**挂载卷中的运行时配置。宿主机项目根目录下的 `.env`（compose 的 env_file）只有 `scripts/install.sh` 方式会自动创建，手动安装必须自行复制。上游 `docs/quick-start.md` 中"无需手动创建"的表述针对脚本安装路径，不适用于手动安装路径。
 
 **修正数据目录路径（重要）**：`.env.example` 默认的 `DATA_DIR=/data`、`PROJECT_ROOT=/easyserver_data` 是**容器内路径**（由 entrypoint 在容器内设置），但这两个变量同时被 compose 用作**宿主机卷挂载源**。保持默认会把数据目录挂载到系统根目录 `/data` 与 `/easyserver_data`。建议改为真实宿主机路径：
 
@@ -271,7 +273,7 @@ curl -s -X POST http://localhost:8900/api/config/auth/login \
 | `GET /api/modules` | 401 | 200 | 需 JWT |
 | `GET /api/services` | 401 | 200 | 需 JWT |
 
-> 后续所有写操作（配置、模块安装等）均需携带 Bearer Token。
+> 除白名单接口（`/api/health`、登录、setup）外，所有 API 调用（含读操作）均需携带 Bearer Token。
 
 ---
 
@@ -309,7 +311,11 @@ services:
 ### 6.3 port-check 接口（实测行为说明）
 
 ```bash
-curl -s http://localhost:8900/api/services/port-check
+# 该接口需认证：先登录换取 TOKEN（sed 提取），再携带 Bearer 头调用
+TOKEN=$(curl -s -X POST http://localhost:8900/api/config/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"password":"<你的管理密码>"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8900/api/services/port-check
 ```
 
 返回 `{"has_conflict":false,"conflicts":[],...}` 并**列出全部注册模块的端口清单**。实测注意：**即使尚未安装任何模块（空安装态），该接口也会列出全部注册模块端口**（实测 10 个），这是当前实现行为，并非已安装清单，解读时注意区分。
@@ -330,7 +336,7 @@ curl http://localhost:8900/api/health
 # 浏览器打开 http://localhost:8900，完成第 5 节的初始化向导
 ```
 
-三项全部通过即部署成功。此后可在面板「应用商店」按需安装服务模块（初始不安装任何模块）。
+三项全部通过即部署成功。此后可在面板「应用商店」按需安装服务模块（初始不安装任何模块）。各模块的安装前置与实测行为，详见 `docs/guides/modules/<模块名>.md`（共 13 篇）。
 
 ---
 
@@ -346,8 +352,9 @@ curl http://localhost:8900/api/health
 | 重启容器后所有登录失效 | 未预设 `JWT_SECRET`，每次重启重新生成 | 按 4.2 预设固定密钥 |
 | 端口绑定失败但 WSL 内 `ss`/`lsof` 查无占用 | mirrored 模式下 Windows 侧占用端口 | `netstat.exe -ano \| findstr 8900` 排查，override 换 8901（见第 6 节） |
 | `docker compose build` 中途 apt 报 `Connection reset by peer` / exit 100 | 构建内网络间歇故障 | **直接重试**，已拉取层命中缓存（见 4.1） |
+| 模块安装约 600s 后拉取超时失败（`failed(pull)`） | mirror 限速下安装流程内嵌拉取超时 | 安装前先 `docker pull <镜像名>` 预热（引擎仍会执行 pull，本地命中后秒级完成；被镜像源拒绝的精确 tag 预拉取无法绕过） |
 | 当前用户无法直接执行 `docker` 命令 | 用户组未在当前会话刷新 | `sg docker -c "<命令>"` 或重新登录（见 2.7） |
-| 登录接口返回 401 | 密码错误或 setup 未完成 | 确认已完成初始化向导；密码无找回机制，遗忘需按官方文档重置管理员密码 |
+| 登录接口返回 401 | 密码错误或 setup 未完成 | 确认已完成初始化向导；密码无找回与重置机制（截至 v0.3.0 官方文档未提供重置流程），务必妥善保管，如确认丢失可在项目 issue 求助 |
 | 容器内运行 healthcheck.sh 报 401 / exit 127 | 已知脚本缺陷：API 检查项无认证头（setup 完成后必报 401）；DOMAIN 非空时依赖的 `dig` 不存在导致 `set -e` 崩溃 | 以 `/api/health` 与 compose ps 的 healthy 状态为准，脚本输出暂不作为判据 |
 | WSL 重启后面板无法访问 | Docker 服务未随 WSL 启动 | `sudo service docker start` 后 `docker compose up -d` |
 
