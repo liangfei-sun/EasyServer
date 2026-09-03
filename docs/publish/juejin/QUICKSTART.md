@@ -165,7 +165,7 @@ docker compose up -d   # 重建后访问 http://localhost:8901
 
 - **现象**：mirror 限速（实测 25-40 KB/s）下，大镜像（Jellyfin、Frigate、Nextcloud build 等）在安装流程中拉取可能触发约 600s 量级的超时失败。
 - **根因**：安装流程内嵌的拉取对慢速链路不友好；超时后任务记为失败。
-- **解法**：安装前手动 `docker pull <镜像名>` 预热，本地命中后安装流程直接跳过拉取（实测预拉取生效后，ddns-go 安装仅 3.3s、uptime-kuma 5s 完成）。
+- **解法**：安装前手动 `docker pull <镜像名>` 预热，预拉取后安装流程中的拉取环节秒级完成（本地命中免下载；实测 ddns-go 安装仅 3.3s、uptime-kuma 5s 完成）。注意引擎仍会执行 pull，对被镜像源拒绝的精确 tag，预拉取无法绕过失败。
 
 ```bash
 # 例：装 uptime-kuma 前先预热
@@ -202,7 +202,7 @@ sg docker -c "JELLYFIN_NETWORK_MODE=bridge DATA_DIR=<数据目录> docker compos
 
 ### 坑 4：build 型模块面板安装结构性失败——手动 build 降级
 
-- **现象**：Nextcloud、backup、calibre-web 等面板安装报 `failed(pull)`，重试无效。
+- **现象**：Nextcloud、backup 等 compose 含 `build:` 的模块，面板安装报 `failed(pull)`，重试无效。
 - **根因**：引擎对 compose 含 `build:` 的服务仍逐镜像去 registry 拉取，本地构建镜像名被 mirror 白名单拒绝，无本地 fallback（缺陷 N，实测多例实证）。
 - **解法**：绕过面板，手动 build + up（实测均通）：
 
@@ -216,6 +216,8 @@ sg docker -c "NEXTCLOUD_ADMIN_USER=<用户名> NEXTCLOUD_ADMIN_PASSWORD=<密码>
 ```
 
 > Nextcloud 有个独立必踩项：`NEXTCLOUD_TRUSTED_DOMAINS` 默认值是写死的个人域名（缺陷 V），**必须显式传你的域名/IP**，否则访问报 Untrusted domain。
+
+> **calibre-web 不在本坑范围**：它并非 build 型模块，失败根因是其精确版本 tag 被镜像源拒绝（缺陷 S），叠加引擎 pull 无本地 fallback（缺陷 N）导致无法降级到本地镜像。若本地已有可用镜像，可手动 `docker compose up -d` 降级安装绕过拉取；否则需等 tag 可拉取或自行调整 tag。
 
 ### 坑 5：.env 必做步骤——不做 up 起不来 / 数据挂错位 / 登录反复失效
 
