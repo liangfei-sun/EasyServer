@@ -338,8 +338,9 @@ curl http://localhost:8900/api/health
 | 重启容器后所有登录失效 | 未预设 `JWT_SECRET`，每次重启重新生成 | 按 5.2 预设固定密钥 |
 | 端口绑定失败但 WSL 内 `ss`/`lsof` 查无占用 | mirrored 模式下 Windows 侧占用端口 | `netstat.exe -ano \| findstr 8900` 排查，override 换 8901（见第七节） |
 | `docker compose build` 中途 apt 报 `Connection reset by peer` / exit 100 | 构建内网络间歇故障 | **直接重试**，已拉取层命中缓存（见 5.1） |
+| 模块安装约 600s 后拉取超时失败（`failed(pull)`） | mirror 限速下安装流程内嵌拉取超时 | 安装前先 `docker pull <镜像名>` 预热（本地命中后拉取环节秒级完成；引擎仍会执行 pull），细节见仓库 `docs/guides/modules/` 对应篇 |
 | 当前用户无法直接执行 `docker` 命令 | 用户组未在当前会话刷新 | `sg docker -c "<命令>"` 或重新登录（见 3.5） |
-| 登录接口返回 401 | 密码错误或 setup 未完成 | 确认已完成初始化向导；密码无找回机制，遗忘需按官方文档重置管理员密码 |
+| 登录接口返回 401 | 密码错误或 setup 未完成 | 确认已完成初始化向导；密码无找回与重置机制（截至 v0.3.0 官方文档未提供重置流程），务必妥善保管，如确认丢失可在项目 issue 求助 |
 | WSL 重启后面板无法访问 | Docker 服务未随 WSL 启动 | `sudo service docker start` 后 `docker compose up -d` |
 
 ---
