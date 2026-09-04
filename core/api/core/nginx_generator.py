@@ -8,8 +8,10 @@ EasyServer Nginx Config Generator
 """
 import asyncio
 import os
+import re
 import subprocess
 from pathlib import Path
+import yaml
 from jinja2 import Environment, FileSystemLoader
 
 
@@ -80,9 +82,46 @@ class NginxGenerator:
                 return item["key"]
         return ""
 
+    @staticmethod
+    def _expand_env_value(value: str, env: dict) -> str:
+        """展开 ${VAR:-default} / $VAR（与 DockerManager 同规则，C3 用）"""
+        value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}", lambda m: env.get(m.group(1)) or m.group(2) or "", value)
+        value = re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", lambda m: env.get(m.group(1), ""), value)
+        return value
+
+    def _module_network_modes(self, module_id: str, env: dict) -> list:
+        """读取模块 compose 各服务的 network_mode（C3，展开环境变量默认值）
+
+        host 网络模块（jellyfin/nginx 等）容器直接用宿主网络栈，实际监听
+        恒为容器内端口；compose 声明的 network_mode 是端口语义的依据。
+        compose 缺失/解析失败返回 []（按 bridge 处理，保守走 env 解析）。
+        """
+        compose_file = self.modules_dir / module_id / "docker-compose.yml"
+        if not compose_file.exists():
+            return []
+        try:
+            with open(compose_file, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f) or {}
+        except Exception:
+            return []
+        modes = []
+        for svc in (compose.get("services") or {}).values():
+            if isinstance(svc, dict) and svc.get("network_mode"):
+                modes.append(self._expand_env_value(str(svc["network_mode"]), env).strip())
+        return modes
+
     def _resolve_module_port(self, module: dict, env: dict) -> int:
-        """模块运行时端口（F5）：.env 的 XXX_PORT 优先，access.port 静态值回退"""
+        """模块运行时端口（F5）：.env 的 XXX_PORT 优先，access.port 静态值回退
+
+        C3：host 网络模式模块例外——实际监听恒为 access.port（容器内端口），
+        env 端口仅影响 bridge ports 映射（host 模式下 daemon 丢弃 ports），
+        须回退 access.port，否则反代指向宿主映射端口而应用监听在容器默认
+        端口（jellyfin：反代 18096 vs 实际 8096）→ 502。
+        """
         port = module.get("access", {}).get("port", 0) or 0
+        modes = self._module_network_modes(module.get("id", ""), env)
+        if "host" in modes:
+            return port  # host 模式：env 端口不影响实际监听，回退静态值（旧行为）
         key = self._find_port_env_key(module)
         if key and key in env:
             try:
