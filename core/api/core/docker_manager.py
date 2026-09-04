@@ -650,17 +650,50 @@ class DockerManager:
                     actions.append(f"警告：预创建 {host_path} 失败: {err}")
         return actions
 
+    def _runtime_data_roots(self) -> list:
+        """运行时数据根（宿主视角），prepare_data_dirs 与 _write_host_file 共用
+
+        C8①：rstrip('/') 会把根 '/' 削成空串，空串（或 '/' 本身）会让任意
+        绝对路径通过 startswith 边界校验，故过滤空根与 '/'。
+        """
+        data_root = (os.environ.get("DATA_DIR_HOST") or os.environ.get("DATA_DIR") or "/data").rstrip("/")
+        project_root = (os.environ.get("PROJECT_ROOT_HOST") or str(self.project_root)).rstrip("/")
+        return [r for r in (data_root, project_root) if r and r != "/"]
+
+    def _host_to_container_path(self, host_path: str) -> str:
+        """把宿主数据根下的绝对路径换算为 core 容器内挂载点路径（C1）
+
+        compose config 渲染出的挂载 source 是宿主绝对路径（DATA_DIR_HOST /
+        PROJECT_ROOT_HOST 值）；core 容器只挂载 DATA_DIR→/data 与
+        PROJECT_ROOT→/easyserver_data，容器内并不存在该宿主路径——直接对
+        source 做 exists/mkdir/chown 会落在容器可写层，宿主目录仍为
+        root:root（AB 修复在推荐配置 DATA_DIR=/home/... 下静默失效，仅在
+        默认 DATA_DIR=/data 恰好命中时才碰巧成功）。
+        故按挂载映射换算：DATA_DIR_HOST 前缀 → /data 前缀，
+        PROJECT_ROOT_HOST 前缀 → /easyserver_data 前缀（DATA_DIR_HOST 更
+        具体，优先匹配）。非 Docker 运行（无 *_HOST 注入，core 进程直接
+        跑在宿主）时路径本机可见，原样返回。
+        """
+        data_root = (os.environ.get("DATA_DIR_HOST") or "").rstrip("/")
+        project_root = (os.environ.get("PROJECT_ROOT_HOST") or "").rstrip("/")
+        for root, mount in ((data_root, "/data"), (project_root, "/easyserver_data")):
+            if root and root != "/" and host_path.startswith(root + "/"):
+                return mount + host_path[len(root):]
+        return host_path
+
     async def prepare_data_dirs(self, module_id: str) -> list:
-        """安装前预创建模块数据目录并修正属主为 uid 1000（AB）
+        """安装前预创建模块数据目录并修正属主为 uid 1000（AB，C1 修正作用域）
 
         docker daemon 为不存在的 bind 源创建的目录属主为 root:root，以
         uid 1000 运行的镜像（filebrowser 等）首启写入即 EACCES（API 呈现 403）。
         经 docker compose config 渲染解析 bind 挂载（变量插值与 up 实际一致），
-        仅对运行时数据根（DATA_DIR / PROJECT_ROOT）之下、宿主不存在的新建目录
+        仅对运行时数据根（DATA_DIR / PROJECT_ROOT）之下、不存在的新建目录
         chown 1000:1000；已存在目录一律不触碰（避免破坏 postgres 类
         非 1000 属主数据，其镜像入口会自行 chown）。只读挂载与单文件挂载
-        （F4 prepare_single_file_mounts 负责）跳过。core 进程以 root 运行且
-        数据根为宿主 bind 挂载，chown 直接生效于宿主。
+        （F4 prepare_single_file_mounts 负责）跳过。
+        C1：渲染出的 source 为宿主绝对路径，core 容器内不存在该路径——先经
+        _host_to_container_path 换算为容器内挂载点（/data、/easyserver_data）
+        再 exists/mkdir/chown，经 bind 挂载实际生效于宿主目录。
         返回动作描述列表（供安装日志展示）。
         """
         actions = []
@@ -677,9 +710,7 @@ class DockerManager:
         except yaml.YAMLError as e:
             logger.warning(f"Module {module_id} prepare_data_dirs: parse config failed: {e}")
             return actions
-        data_root = (os.environ.get("DATA_DIR_HOST") or os.environ.get("DATA_DIR") or "/data").rstrip("/")
-        project_root = (os.environ.get("PROJECT_ROOT_HOST") or str(self.project_root)).rstrip("/")
-        roots = [data_root, project_root]
+        roots = self._runtime_data_roots()
         for svc in (compose.get("services") or {}).values():
             volumes = (svc.get("volumes") or []) if isinstance(svc, dict) else []
             for vol in volumes:
@@ -697,7 +728,9 @@ class DockerManager:
                     continue  # 单文件挂载由 F4 处理
                 if not any(source.startswith(r + "/") for r in roots):
                     continue  # 仅运行时数据根之下
-                p = Path(source)
+                # C1：source 是宿主绝对路径，core 容器内不存在；换算为容器内
+                # 挂载点后再操作，mkdir/chown 经 bind 挂载实际落在宿主目录
+                p = Path(self._host_to_container_path(source))
                 if p.exists():
                     continue  # 已存在目录不触碰（避免破坏既有属主）
                 try:
