@@ -241,6 +241,8 @@ sudo docker restart easyserver-filebrowser
 
 **通用建议**：每个模块装完先 `docker compose ps` 看健康状态再开始使用——实测引擎对安装"成功"无健康门控，install 返回 success 不等于容器健康。
 
+**down 提醒**：`docker compose down` 会删除容器并触发配置重新初始化（管理密码等 setup 配置会丢）。跨 down 保留核心配置，可在 override 中加命名卷 `easyserver-app-data:/app/data`（实测有效，见仓库 `docs/guides/INSTALL_GUIDE.md` 第 9 节；`/app/.env` 与模块级配置不在此列，down 后重新登录/配置即可）；日常启停用 `stop`/`restart` 最稳妥。
+
 ---
 
 ## 小结

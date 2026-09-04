@@ -355,6 +355,8 @@ curl http://localhost:8900/api/health
 docker compose build && docker compose up -d
 ```
 
+> ❗ **down 提醒**：`docker compose down` 会删除容器并触发配置重新初始化（管理密码等 setup 配置会丢）。跨 down 保留核心配置，可在 override 中加命名卷 `easyserver-app-data:/app/data`（实测有效，详见仓库 `docs/guides/INSTALL_GUIDE.md` 第 9 节；`/app/.env` 与模块级配置不在此列，down 后重新登录/配置即可）；日常启停用 `stop`/`restart` 最稳妥。
+
 装好核心之后，下一步就是把服务装起来、把网络访问配出去——这部分（域名反代 / IPv6 直连 / Cloudflare Tunnel / 智能混合路由五种方式怎么选）我在下一篇网络配置教程里展开，欢迎关注。
 
 - 仓库地址：[https://github.com/liangfei-sun/EasyServer](https://github.com/liangfei-sun/EasyServer)（开源项目 EasyServer，MIT 协议）

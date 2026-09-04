@@ -373,4 +373,21 @@ docker compose up -d
 docker compose build && docker compose up -d
 ```
 
+> ❗ **重要提醒（down 与配置持久化，v0.3.0 实测）**：`down` 会删除容器，容器内 `/app/data/config.yaml`（管理员密码 hash、域名、`access_mode` 等 setup 配置）与 `/app/.env` 随可写层丢失，下次 `up` 时 entrypoint 重新初始化（需重做 setup）。应对方式：
+>
+> 1. **可通过 override 命名卷持久化 `/app/data`（实测有效）**：在 `docker-compose.override.yml` 中为 `easyserver-core` 添加：
+>
+>    ```yaml
+>    services:
+>      easyserver-core:
+>        volumes:
+>          - easyserver-app-data:/app/data
+>
+>    volumes:
+>      easyserver-app-data:
+>    ```
+>
+>    实测 down/up 后原密码登录成功、setup 配置字段全部保留。注意：命名卷必须**在首次 down 之前**挂载生效（旧配置在旧容器可写层，down 一旦发生不可恢复）；`/app/.env` 仍会重置——它是单文件且 entrypoint 用 `sed -i` 原地改写（换 inode），文件挂载会脱靶，无法持久化，重新登录即可；模块级配置（模块密码/端口）在 down 后需重新配置。
+> 2. **最稳妥的日常启停仍是 `stop` / `restart`**（保留容器可写层，配置不丢）。
+
 WSL 环境重启后需先 `sudo service docker start`（未启用 systemd 时）；容器配置了 `restart: unless-stopped`，Docker 服务恢复后通常会随之自动启动，用 `docker compose ps` 确认。
