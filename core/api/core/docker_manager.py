@@ -17,6 +17,28 @@ from .module_loader import ModuleLoader
 logger = logging.getLogger(__name__)
 
 
+def _parse_compose_ps_containers(stdout: str) -> list:
+    """解析 docker compose ps --format json 输出，兼容逐行 JSON 与整体数组两种格式"""
+    if not stdout or not stdout.strip():
+        return []
+    try:
+        parsed = json.loads(stdout)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            return [parsed]
+    except json.JSONDecodeError:
+        pass
+    containers = []
+    for line in stdout.strip().split("\n"):
+        if line.strip():
+            try:
+                containers.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return containers
+
+
 class DockerManager:
     # 镜像仓库网络错误诊断规则：(类型, 正则, 友好提示)
     _DIAGNOSE_RULES = [
@@ -344,6 +366,108 @@ class DockerManager:
     async def async_get_module_logs(self, module_id: str, lines: int = 100) -> str:
         rc, stdout, stderr = await self._async_run_compose(module_id, "logs", "--no-color", "--tail", str(lines), check=False)
         return stdout + stderr
+
+    async def _async_inspect_state(self, container_id: str) -> Optional[dict]:
+        """docker inspect 读取容器 State（Status/Health/RestartCount），失败返回 None"""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "inspect", "--format", "{{json .State}}", container_id,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+            if proc.returncode != 0:
+                return None
+            return json.loads(stdout.decode())
+        except (asyncio.TimeoutError, json.JSONDecodeError, OSError):
+            return None
+
+    async def async_wait_module_healthy(self, module_id: str, timeout: int = 90, interval: int = 3) -> dict:
+        """安装后健康门控：轮询模块容器状态，稳定运行判成功（F1）
+
+        成功条件：全部容器 Status=running（声明了 healthcheck 的须 Health=healthy），
+        且连续 2 次轮询 RestartCount 不增（排除启动即崩溃重启的假健康）。
+        仅依赖 Docker 状态探测，不做 HTTP 探测——core 与模块处于不同网络，
+        无法通过宿主 127.0.0.1 端口探测。
+        失败/超时返回时附带 compose logs --tail 30，用于展示真实失败原因。
+
+        返回 {success, error, logs, containers, restarts}
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        stable_rounds = 0
+        prev_restarts = None
+        last_reason = f"健康探测超时（{timeout}s）"
+
+        while loop.time() < deadline:
+            rc, stdout, stderr = await self._async_run_compose(
+                module_id, "ps", "--format", "json", check=False
+            )
+            containers = _parse_compose_ps_containers(stdout) if rc == 0 else []
+            if not containers:
+                last_reason = (stderr or "").strip() or "docker compose ps 未发现任何容器"
+                stable_rounds = 0
+                prev_restarts = None
+                await asyncio.sleep(interval)
+                continue
+
+            container_names = []
+            all_ok = True
+            total_restarts = 0
+            reasons = []
+            for c in containers:
+                cid = c.get("ID") or c.get("Id") or ""
+                name = c.get("Name") or c.get("name") or cid
+                container_names.append(name)
+                state = await self._async_inspect_state(cid) if cid else None
+                if state is None:
+                    all_ok = False
+                    reasons.append(f"容器 {name} 无法读取运行状态")
+                    continue
+                status = state.get("Status", "")
+                health = (state.get("Health") or {}).get("Status")  # 无 healthcheck 时为 None
+                restarts = state.get("RestartCount", 0) or 0
+                total_restarts += restarts
+                running = status == "running"
+                health_ok = health is None or health == "healthy"
+                if not running:
+                    all_ok = False
+                    reason = f"容器 {name} 状态为 {status}"
+                    if state.get("ExitCode") not in (None, 0):
+                        reason += f"（退出码 {state.get('ExitCode')}）"
+                    reasons.append(reason)
+                elif not health_ok:
+                    all_ok = False
+                    reasons.append(f"容器 {name} 健康检查为 {health}")
+
+            if all_ok:
+                if prev_restarts is not None and total_restarts <= prev_restarts:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 1
+                prev_restarts = total_restarts
+                if stable_rounds >= 2:
+                    return {
+                        "success": True,
+                        "error": "",
+                        "logs": "",
+                        "containers": container_names,
+                        "restarts": total_restarts,
+                    }
+            else:
+                stable_rounds = 0
+                prev_restarts = None
+                last_reason = "; ".join(reasons) or last_reason
+            await asyncio.sleep(interval)
+
+        logs = await self.async_get_module_logs(module_id, lines=30)
+        return {
+            "success": False,
+            "error": last_reason,
+            "logs": logs,
+            "containers": [],
+            "restarts": None,
+        }
 
     def _load_env_dict(self) -> dict:
         """加载 .env 文件为字典"""

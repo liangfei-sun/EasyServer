@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/modules", tags=["modules"])
 # key = module_id，同一模块同一时间只允许一个安装任务（防重复安装）
 # 任务结构：{module_id, status, stage, error, log, created_at, finished_at}
 # status: pending / running / success / failed
-# stage: pull / up（后台执行阶段）
+# stage: prepare / pull / up / health（后台执行阶段）
 # ---------------------------------------------------------------------------
 _INSTALL_TASKS = {}
 _TASK_MAX_RETENTION = 50  # 完成任务最多保留条数
@@ -104,6 +104,17 @@ async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager
             raise _InstallError(
                 f"容器启动失败: {result.get('error', '未知错误')}",
                 result.get("error") or ""
+            )
+
+        # 阶段 3：健康门控（F1）——up 成功 ≠ 能稳定运行（如缺少证书/配置时容器会崩溃重启），
+        # 安装完成前轮询容器状态，未达到健康则视为失败并走回滚
+        task["stage"] = "health"
+        task["log"].append("容器已启动，正在等待健康检查...")
+        health = await dm.async_wait_module_healthy(module_id)
+        if not health.get("success"):
+            raise _InstallError(
+                f"容器启动后未达到健康状态: {health.get('error', '未知原因')}",
+                health.get("logs") or ""
             )
 
         task["status"] = TASK_SUCCESS
