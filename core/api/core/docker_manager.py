@@ -78,7 +78,41 @@ class DockerManager:
 
     def _get_env_file(self) -> Optional[Path]:
         env_file = self.project_root / ".env"
-        return env_file if env_file.exists() else None
+        # AA 附带防御：R29 曾出现 .env 为目录的陷阱，is_file 避免把目录传给 --env-file
+        return env_file if env_file.is_file() else None
+
+    @staticmethod
+    def _read_env_file_keys(env_file: Path) -> set:
+        """读取 env 文件中定义的键名集合（AA：用于从进程环境剔除同键变量）"""
+        keys = set()
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    keys.add(line.split("=", 1)[0].strip())
+        except OSError:
+            pass
+        return keys
+
+    def _compose_process_env(self) -> dict:
+        """构建 compose 子进程环境变量（AA）
+
+        docker compose 变量解析中进程 env 优先于 --env-file；core 容器经
+        docker-compose.yml 的 env_file: .env 预置的模块占位键（如
+        NEXTCLOUD_PORT=8888、NEXTCLOUD_ADMIN_PASSWORD=change_me_nextcloud）
+        会压制安装时写入 --env-file 的真实 config 值。
+        故剔除与 env-file 同键的进程变量（让 --env-file 即安装 config 生效），
+        随后仍应用宿主路径覆盖（PROJECT_ROOT_HOST/DATA_DIR_HOST 不受影响）。
+        """
+        env = dict(os.environ)
+        env_file = self._get_env_file()
+        if env_file:
+            for key in self._read_env_file_keys(env_file):
+                env.pop(key, None)
+        env.update(self._get_host_env_overrides())
+        return env
 
     def _get_host_env_overrides(self) -> dict:
         """当运行在 Docker 容器内时，返回需要用宿主机路径覆盖的环境变量映射。
@@ -109,11 +143,8 @@ class DockerManager:
     def _run_compose(self, module_id: str, *args, check: bool = True) -> subprocess.CompletedProcess:
         cmd = self._build_compose_cmd(module_id, *args)
         module_dir = self.modules_dir / module_id
-        # 注入宿主机路径覆盖（Docker socket 模式下 volume 需要宿主机路径）
-        env = None
-        overrides = self._get_host_env_overrides()
-        if overrides:
-            env = {**os.environ, **overrides}
+        # AA：剔除与 env-file 同键的进程占位变量（安装 config 生效）+ 宿主路径覆盖
+        env = self._compose_process_env()
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(module_dir), timeout=120, env=env)
         if check and result.returncode != 0:
             raise RuntimeError(f"Docker compose 命令失败: {result.stderr}")
@@ -122,11 +153,8 @@ class DockerManager:
     async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120) -> tuple:
         """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)"""
         cmd = self._build_compose_cmd(module_id, *args)
-        # 注入宿主机路径覆盖（Docker socket 模式下 volume 需要宿主机路径）
-        env = None
-        overrides = self._get_host_env_overrides()
-        if overrides:
-            env = {**os.environ, **overrides}
+        # AA：剔除与 env-file 同键的进程占位变量（安装 config 生效）+ 宿主路径覆盖
+        env = self._compose_process_env()
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
