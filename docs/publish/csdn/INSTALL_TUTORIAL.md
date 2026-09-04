@@ -247,7 +247,9 @@ docker compose up -d
 
 > 💡 **提示**（实测确认）：系统**没有用户名概念，也没有默认密码**——采用单管理员密码认证，密码在向导中自行设置。JWT Token 实测有效期约 **7 天**，过期后重新登录即可。
 
-![占位：管理面板初始化向导](IMAGE_PLACEHOLDER-setup-wizard)
+![管理面板初始化向导](../../images/setup-wizard.png)
+
+*图：初始化向导——填主域名、SSL 邮箱、设管理员密码三步即完成。*
 
 喜欢用 API 的朋友，向导也有等价的 REST 接口（完整 Swagger UI 在 `/docs`）：
 

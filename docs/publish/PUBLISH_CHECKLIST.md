@@ -100,27 +100,31 @@ EasyServer 推广物料 · 发布操作清单（本文件为内部操作手册�
 
 ## 4. 配图外链说明（占位符 → 素材 → 图床）
 
-**背景（重要）**：仓库 `.gitignore` 含 `# 截图文件 *.png` 规则，**新截图无法提交入库**。`docs/images/` 下已有 3 张历史跟踪的 png（网络配置教程底图），其余配图均无仓库素材。因此：**所有发布配图必须先上传图床，再以外链替换文内占位符**。
+**背景（重要）**：仓库 `.gitignore` 含 `# 截图文件 *.png` 规则，新截图需 `git add -f` 强制入库。2026-09-04 已入库 6 张面板截图（login / panel-home / module-store / network-config / settings / setup-wizard，`docs/images/` 共 9 张跟踪 png），稿件中可用素材已按相对路径 `../../images/<文件名>` 嵌入（稿件位于 `docs/publish/<平台>/` 二级目录，故为两层）；**发布前仍需将图片上传图床并替换为外链**（多数平台不解析仓库相对路径，且需防防盗链 403）。其余无素材占位符（docker-version / build-log / health-check / compose-ps）保留待补截图。
 
 **图床选型（任选其一）**：
 - **SM.MS**：免费额度即可用，注册后上传拿 https 直链，适合轻量使用
 - **阿里云 OSS**（或腾讯云 COS）：稳定可控，需创建 Bucket（公共读）、建议配置防盗链与生命周期
 - 上传后必须**外链自检**：浏览器无痕窗口打开直链确认可访问
 
-**占位符对照表**（10 个占位符 / 共 11 处出现）：
+**占位符对照表**（10 个占位符 / 共 11 处出现；已嵌入 7 处，保留待补 4 处）：
 
-| 占位符 | 出现文件 | 建议截图内容 | 可复用底稿 |
-|--------|---------|-------------|-----------|
-| `IMAGE_PLACEHOLDER-docker-version` | csdn/INSTALL_TUTORIAL | `docker version` + hello-world 输出 | 需新截图 |
-| `IMAGE_PLACEHOLDER-build-log` | csdn/INSTALL_TUTORIAL | `docker compose build` 完成输出 | 需新截图 |
-| `IMAGE_PLACEHOLDER-setup-wizard` | csdn/INSTALL_TUTORIAL、juejin/QUICKSTART | 管理面板初始化向导页 | 需新截图 |
-| `IMAGE_PLACEHOLDER-health-check` | csdn/INSTALL_TUTORIAL | `/api/health` 返回 + `docker compose ps` | 需新截图 |
-| `IMAGE_PLACEHOLDER-network-overview` | csdn/NETWORK_TUTORIAL | 网络配置页总览 | `docs/images/network-config-overview.png` |
-| `IMAGE_PLACEHOLDER-mode-selector` | csdn/NETWORK_TUTORIAL | 访问方式选择器 | `docs/images/mode-selector.png` |
-| `IMAGE_PLACEHOLDER-tunnel-card` | csdn/NETWORK_TUTORIAL | Tunnel 中转服务卡片 | `docs/images/tunnel-services-card.png` |
-| `IMAGE_PLACEHOLDER-panel-home` | zhihu/ANSWER_DRAFT | 管理面板首页 | 需新截图 |
-| `IMAGE_PLACEHOLDER-module-store` | zhihu/ANSWER_DRAFT | 应用商店模块列表 | 需新截图 |
-| `IMAGE_PLACEHOLDER-compose-ps` | juejin/QUICKSTART | `docker compose ps` Up (healthy) | 需新截图 |
+| 占位符 | 出现文件 | 建议截图内容 | 素材 | 状态 |
+|--------|---------|-------------|------|------|
+| `IMAGE_PLACEHOLDER-docker-version` | csdn/INSTALL_TUTORIAL | `docker version` + hello-world 输出 | 无 | 保留占位符，需图床（待补截图） |
+| `IMAGE_PLACEHOLDER-build-log` | csdn/INSTALL_TUTORIAL | `docker compose build` 完成输出 | 无 | 保留占位符，需图床（待补截图） |
+| `IMAGE_PLACEHOLDER-setup-wizard` | csdn/INSTALL_TUTORIAL、juejin/QUICKSTART | 管理面板初始化向导页 | `docs/images/setup-wizard.png` | 已嵌入（2 处，相对路径） |
+| `IMAGE_PLACEHOLDER-health-check` | csdn/INSTALL_TUTORIAL | `/api/health` 返回 + `docker compose ps` | 无 | 保留占位符，需图床（待补截图） |
+| `IMAGE_PLACEHOLDER-network-overview` | csdn/NETWORK_TUTORIAL | 网络配置页总览 | `docs/images/network-config-overview.png` | 已嵌入 |
+| `IMAGE_PLACEHOLDER-mode-selector` | csdn/NETWORK_TUTORIAL | 访问方式选择器 | `docs/images/mode-selector.png` | 已嵌入 |
+| `IMAGE_PLACEHOLDER-tunnel-card` | csdn/NETWORK_TUTORIAL | Tunnel 中转服务卡片 | `docs/images/tunnel-services-card.png` | 已嵌入 |
+| `IMAGE_PLACEHOLDER-panel-home` | zhihu/ANSWER_DRAFT | 管理面板首页 | `docs/images/panel-home.png` | 已嵌入 |
+| `IMAGE_PLACEHOLDER-module-store` | zhihu/ANSWER_DRAFT | 应用商店模块列表 | `docs/images/module-store.png` | 已嵌入（注：为“基础设施”分类默认视图——5 卡片、13 模块分布 5 分类，UI 无“全部”分类入口） |
+| `IMAGE_PLACEHOLDER-compose-ps` | juejin/QUICKSTART | `docker compose ps` Up (healthy) | 无 | 保留占位符，需图床（待补截图） |
+
+**备用素材（已入库，暂无对应占位符）**：`login.png`（登录页）、`network-config.png`（网络配置页实拍）、`settings.png`（设置页）——后续稿件或配图升级时取用。
+
+**zhihu 稿说明**：ANSWER_DRAFT 原设计含 2 处占位图（panel-home / module-store），已按相对路径嵌入；知乎发布时图片由平台上传转存，不依赖仓库路径。
 
 **截图脱敏要求**：新截图中不得出现真实域名、公网 IP、密钥、个人用户目录路径——面板示例统一用 `example.com` / `<user>` 类占位；复用 `docs/images/` 底稿前同样过一遍脱敏检查。
 

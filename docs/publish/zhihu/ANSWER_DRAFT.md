@@ -42,7 +42,9 @@ EasyServer 推广稿 · 知乎经验帖
 
 `docker compose up -d` 之后，entrypoint 自动完成初始化（建网络、铺模块模板），容器健康检查通过变 `Up (healthy)`。浏览器打开 `localhost:8900`，一个极简向导：填域名、填 SSL 邮箱、设管理员密码——就三步，而且系统**没有用户名概念也没有默认密码**，单管理员密码认证，Token 实测有效期约 7 天。面板是 Vue 3 + Element Plus 的，应用商店按需装服务，默认一个模块都不装，干净。
 
-![占位：管理面板首页](IMAGE_PLACEHOLDER-panel-home)
+![管理面板首页](../../images/panel-home.png)
+
+*图：管理面板首页——侧边栏功能入口与概览卡片，默认未安装任何模块。*
 
 ---
 
@@ -56,7 +58,9 @@ EasyServer 推广稿 · 知乎经验帖
 - **Frigate（AI 视频监控）**：7.48 GB 的大家伙，但镜像来自 ghcr.io，直连健康、不经 Docker Hub 那条限速链路，拉取反而顺畅。而且**没有摄像头也完全可用**——UI 和 API 照常工作，容错设计不错，可以先装后配。
 - **Nextcloud（私有云盘）**：首次初始化实测**约 40 秒**完成（比文档预期的 1-3 分钟快不少），装完 `status.php` 一查，34.0.3 版本、installed=true，安装一次成功（UI 登录在无头环境下受 CSRF 校验所限未做验证）。
 
-![占位：模块应用商店](IMAGE_PLACEHOLDER-module-store)
+![模块应用商店](../../images/module-store.png)
+
+*图：应用商店（基础设施分类默认视图）——13 个模块按 5 个分类分卡片展示，UI 无"全部"聚合入口。*
 
 **再说三个翻车（都有解）：**
 

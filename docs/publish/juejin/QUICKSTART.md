@@ -155,7 +155,9 @@ docker compose up -d   # 重建后访问 http://localhost:8901
 
 ![占位：docker compose ps 容器状态](IMAGE_PLACEHOLDER-compose-ps)
 
-![占位：管理面板初始化向导](IMAGE_PLACEHOLDER-setup-wizard)
+![管理面板初始化向导](../../images/setup-wizard.png)
+
+*图：初始化向导（填主域名 → SSL 邮箱 → 设管理员密码，三步完成）。*
 
 ---
 

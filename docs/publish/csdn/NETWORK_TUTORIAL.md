@@ -35,7 +35,9 @@ EasyServer 推广稿 · CSDN 网络配置教程
 
 所有配置操作既可通过 Web 面板完成，也可通过 REST API（`/docs` 有完整 Swagger UI）操作。
 
-![占位：网络配置页总览](IMAGE_PLACEHOLDER-network-overview)
+![网络配置页总览](../../images/network-config-overview.png)
+
+*图：网络配置页总览——网络状态、当前模式管理区、Tunnel 卡片与域名信息自上而下排布。*
 
 **四种自动模式 + 一种自由模式对比**（含实测行为）：
 
@@ -47,7 +49,9 @@ EasyServer 推广稿 · CSDN 网络配置教程
 | 智能混合路由 | `hybrid` | 域名 + DNS 凭证 + CF Tunnel Token | 大带宽服务与轻量服务并存，按服务分流 |
 | 自由配置 | `custom` | 无 | 高级玩家自管网络模块；也可作"安全回退档" |
 
-![占位：访问方式选择器](IMAGE_PLACEHOLDER-mode-selector)
+![访问方式选择器](../../images/mode-selector.png)
+
+*图：访问方式选择器——四种自动模式与自由配置的切换入口。*
 
 **怎么选？一句话版本**：
 
@@ -148,7 +152,9 @@ docker exec easyserver-core grep -E '^(ACCESS_MODE|BIND_ADDRESS)' /app/.env
 3. 点「一键接入」：弹窗逐步显示创建/复用隧道 → 启动 cloudflare-tunnel 容器 → 检查域名托管状态
 4. 「服务发布」卡片 →「可发布」页签 → 点「发布」：自动添加隧道路由（子域名 → 本地端口）并**自动创建 CNAME 记录**，发布后 `https://子域名.你的域名` 免端口访问；「取消发布」会同时删除路由与 CNAME
 
-![占位：Tunnel 中转服务卡片](IMAGE_PLACEHOLDER-tunnel-card)
+![Tunnel 中转服务卡片](../../images/tunnel-services-card.png)
+
+*图：Tunnel 中转服务卡片——一键接入与服务发布入口。*
 
 ### 6.3 实测预警
 
