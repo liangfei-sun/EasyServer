@@ -194,7 +194,7 @@ docker compose up -d
 docker compose ps
 ```
 
-- **你会看到**：首次启动时容器内自动完成初始化（生成运行时配置、创建 `easyserver-proxy` 网络、铺开 13 个模块模板）；`docker compose ps` 显示 `easyserver-core` 状态 **`Up (healthy)`**（健康检查通过约需 10 秒）。
+- **你会看到**：首次启动时容器内自动完成初始化（生成运行时配置、创建 `easyserver-proxy` 网络、铺开 13 个模块模板）；`docker compose ps` 显示 `easyserver-core` 状态 **`Up (healthy)`**（健康检查通过约需 **30–60 秒**：引擎健康检查为 30 秒间隔 + 30 秒启动宽限期，首次初始化时接近上限，属正常）。
 - **截图**：无。
 - **排错**：
 
@@ -264,6 +264,8 @@ curl -s -X POST http://localhost:8901/api/config/auth/login \
   4. `health`：健康门控，确认容器真的稳定运行（而非"进程起了就报成功"）
 
   实测时间线：`pull(t+0) → up(t+11) → health(t+14) → success(t+23)`，约 **23 秒**完成（镜像本地命中时）。
+
+  > 注：本指南日志与命令示例以默认 `DATA_DIR=/data` 演示；若你在第 3b 步把 `DATA_DIR` 改成了自定义路径（如 `/home/<你的用户名>/easyserver_data/data`），请把示例中的 `/data` 替换为你的路径。
 - **截图**：![应用商店模块列表](../images/module-store.png)（安装进度页暂无截图，形态为四阶段日志逐行滚动）
 - **排错**：
 

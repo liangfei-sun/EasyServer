@@ -43,7 +43,7 @@ Nginx 反向代理是所有服务的统一入口，提供 SSL 终止、按子域
 1. **证书缺失（必现）**：站点配置引用 `/etc/nginx/ssl/<域名>/fullchain.cer`，未签发证书时 nginx 启动即崩（`cannot load certificate`）。
 2. **80 端口被占（环境相关）**：模板硬编码 `listen 80`，端口被占时 `bind() failed`。
 
-**实测修复步骤**（宿主执行；命令中 `<PROJECT_ROOT>` 默认安装为容器内路径映射 `/easyserver_data`，按安装指南 4.2 自定义 PROJECT_ROOT 的用户请替换）：
+**实测修复步骤**（宿主执行；命令中 `<PROJECT_ROOT>` 默认安装为容器内路径映射 `/easyserver_data`，按安装指南第 3 步（3b）自定义 PROJECT_ROOT 的用户请替换）：
 
 ```bash
 # ① 生成自签证书临时救急（正式证书由 acme 模块签发后替换）

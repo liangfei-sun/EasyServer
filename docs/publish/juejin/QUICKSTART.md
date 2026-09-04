@@ -186,7 +186,7 @@ sudo touch <DATA_DIR>/ddns-go/config/.ddns_go_config.yaml   # 必须是文件，
 # 中招后：卸载模块 → sudo rm -rf <DATA_DIR>/ddns-go → 预创建文件 → 重装
 ```
 
-> NoteDiscovery 还需合法的默认配置内容（空文件会让应用启动即崩），从镜像内提取默认 config.yaml 再放置——细节见仓库 `docs/guides/modules/notediscovery.md`。
+> NoteDiscovery 需要合法的默认配置内容（空文件会让应用启动即崩）。**新版本引擎已自动处理**：安装时引擎会预创建单文件挂载并用模板渲染出合法的 config.yaml（日志可见「预创建配置文件 …（模板渲染 config.yaml.j2）」），**无需再从镜像内手动提取**；旧版手动提取的细节见仓库 `docs/guides/modules/notediscovery.md`。
 
 ### 坑 3：Jellyfin 在 WSL2 host 模式 SIGSEGV 崩溃循环
 
@@ -243,7 +243,7 @@ sudo docker restart easyserver-filebrowser
 
 **通用建议**：每个模块装完先 `docker compose ps` 看健康状态再开始使用——实测引擎对安装"成功"无健康门控，install 返回 success 不等于容器健康。
 
-**down 提醒**：`docker compose down` 会删除容器并触发配置重新初始化（管理密码等 setup 配置会丢）。跨 down 保留核心配置，可在 override 中加命名卷 `easyserver-app-data:/app/data`（实测有效，见仓库 `docs/guides/INSTALL_GUIDE.md` 第 9 节；`/app/.env` 与模块级配置不在此列，down 后重新登录/配置即可）；日常启停用 `stop`/`restart` 最稳妥。
+**down 提醒**：`docker compose down` 会删除容器并触发配置重新初始化（管理密码等 setup 配置会丢）。跨 down 保留核心配置，可在 override 中加命名卷 `easyserver-app-data:/app/data`（实测有效，见仓库 `docs/guides/INSTALL_GUIDE.md`「日常启停与数据」步；`/app/.env` 与模块级配置不在此列，down 后重新登录/配置即可）；日常启停用 `stop`/`restart` 最稳妥。
 
 ---
 

@@ -57,7 +57,7 @@ docker pull neilpang/acme.sh:v3.0.9
 
 ## 4. 启动与验证
 
-本指南验证到启动层（凭据校验与降级断言），以下为实测验证项（示例中 API 端口 `8901` 为 QA 实测环境经 `docker-compose.override.yml` 修改后的端口，默认安装请使用 `8900`；compose 命令中 `<PROJECT_ROOT>` 默认安装为容器内路径映射 `/easyserver_data`，按安装指南 4.2 自定义 PROJECT_ROOT 的用户请替换）：
+本指南验证到启动层（凭据校验与降级断言），以下为实测验证项（示例中 API 端口 `8901` 为 QA 实测环境经 `docker-compose.override.yml` 修改后的端口，默认安装请使用 `8900`；compose 命令中 `<PROJECT_ROOT>` 默认安装为容器内路径映射 `/easyserver_data`，按安装指南第 3 步（3b）自定义 PROJECT_ROOT 的用户请替换）：
 
 ```bash
 # 1. 校验接口可达（实测 200）

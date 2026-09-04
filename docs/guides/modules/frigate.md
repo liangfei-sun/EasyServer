@@ -54,7 +54,7 @@ curl -s -X POST -H "Authorization: Bearer <你的管理Token>" -H 'Content-Type:
 **手动路径（等价可用）**：
 
 ```bash
-cd <PROJECT_ROOT>/modules/frigate   # <PROJECT_ROOT> 默认安装为容器内路径映射 /easyserver_data，按安装指南 4.2 自定义 PROJECT_ROOT 的用户请替换
+cd <PROJECT_ROOT>/modules/frigate   # <PROJECT_ROOT> 默认安装为容器内路径映射 /easyserver_data，按安装指南第 3 步（3b）自定义 PROJECT_ROOT 的用户请替换
 docker pull ghcr.io/blakeblackshear/frigate:stable
 sg docker -c "FRIGATE_PORT=15000 FRIGATE_RTSP_PORT=18554 DATA_DIR=<数据目录> \
   docker compose -f docker-compose.yml up -d"

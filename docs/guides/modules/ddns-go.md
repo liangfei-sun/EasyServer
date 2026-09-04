@@ -50,7 +50,7 @@ Exception: read /root/.ddns_go_config.yaml: is a directory
 
 应用捕获异常后继续存活并监听 9876，界面看起来一切正常，**但配置永远保存不了（写路径是目录）→ DDNS 功能不可用**，且 UI 上无从得知原因（容器无 healthcheck、引擎 install 恒 success，缺陷 I）。
 
-**实测修复方式**（安装前预创建真文件；命令中 `<DATA_DIR>` 默认安装为容器内路径映射 `/data`，按安装指南 4.2 自定义 DATA_DIR 的用户请替换）：
+**实测修复方式**（安装前预创建真文件；命令中 `<DATA_DIR>` 默认安装为容器内路径映射 `/data`，按安装指南第 3 步（3b）自定义 DATA_DIR 的用户请替换）：
 
 ```bash
 sudo mkdir -p <DATA_DIR>/ddns-go/config
