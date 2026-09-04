@@ -88,7 +88,10 @@ async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager
         task["status"] = TASK_RUNNING
         task["stage"] = "pull"
         task["log"].append("正在拉取镜像，大镜像可能需要几分钟...")
-        rc, _stdout, stderr = await dm.async_pull_module(module_id)
+        rc, stdout, stderr = await dm.async_pull_module(module_id)
+        if stdout:
+            # 显示本地命中/构建等 pull 阶段信息（如 F2 的 [local-hit]/[local-build]）
+            task["log"].append(stdout.strip().split("\n")[-1])
         if rc != 0:
             diag = DockerManager.diagnose_pull_error(stderr or "")
             raise _InstallError(

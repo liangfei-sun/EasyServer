@@ -200,7 +200,25 @@ class DockerManager:
         与启动分离：pull 失败说明是镜像/网络问题，可精确定位诊断。
         大镜像拉取耗时长，超时设为 10 分钟。
         网络波动时自动指数退避重试（最多 max_retries 次）。
+
+        F2：拉取前先做本地短路——
+        - compose 含 build 段（如 backup/nextcloud）→ registry 无此镜像，
+          pull 必然结构性失败，改为显式 compose build 本地构建；
+        - 全部引用镜像本地已存在 → 跳过网络拉取（stdout 返回 [local-hit]）。
         """
+        # F2：本地短路（build 型走本地构建，已拉取镜像直接命中）
+        if self._compose_has_build(module_id):
+            logger.info(f"Module {module_id} compose has build section, building locally instead of pull")
+            # 构建含基础镜像拉取与软件包安装，耗时上限独立于 pull 设为 20 分钟
+            rc, stdout, stderr = await self._async_run_compose(module_id, "build", check=False, timeout=1200)
+            if rc == 0:
+                return 0, "[local-build] compose 含 build 段，已改为本地构建镜像", stderr
+            return rc, stdout, stderr
+        images = await self.get_module_images(module_id)
+        if images and all(self.has_local_image(img) for img in images):
+            logger.info(f"Module {module_id} images all present locally: {images}")
+            return 0, f"[local-hit] 镜像本地已存在，跳过拉取: {', '.join(images)}", ""
+
         base_delay = 2
         for attempt in range(max_retries):
             rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600)
@@ -215,6 +233,42 @@ class DockerManager:
             await asyncio.sleep(delay)
         # unreachable, but satisfy type checker
         return rc, stdout, stderr
+
+    async def get_module_images(self, module_id: str) -> list:
+        """列出模块 compose 引用的镜像（docker compose config --images）"""
+        try:
+            rc, stdout, stderr = await self._async_run_compose(module_id, "config", "--images", check=False)
+        except Exception:
+            return []
+        if rc != 0:
+            return []
+        return [line.strip() for line in stdout.strip().split("\n") if line.strip()]
+
+    def has_local_image(self, image: str) -> bool:
+        """检查镜像是否已存在于本地（docker image inspect）"""
+        try:
+            result = subprocess.run(
+                ["docker", "image", "inspect", image],
+                capture_output=True, text=True, timeout=15
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+
+    def _compose_has_build(self, module_id: str) -> bool:
+        """检查模块 compose 是否包含 build 段（build 型模块不走 registry pull）"""
+        compose_file = self.modules_dir / module_id / "docker-compose.yml"
+        if not compose_file.exists():
+            return False
+        try:
+            with open(compose_file, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f) or {}
+        except Exception:
+            return False
+        for svc in (compose.get("services") or {}).values():
+            if isinstance(svc, dict) and svc.get("build") is not None:
+                return True
+        return False
 
     async def async_stop_module(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "down")
