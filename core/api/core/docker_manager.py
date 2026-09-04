@@ -224,8 +224,21 @@ class DockerManager:
             rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600)
             if rc == 0:
                 return rc, stdout, stderr
-            # 最后一次尝试直接返回，不再等待
+            # 最后一次尝试：F3 降级兑底（denied/manifest）→ 降级失败则维持原失败
             if attempt == max_retries - 1:
+                diag = self.diagnose_pull_error(stderr or "")
+                if diag.get("type") == "manifest":
+                    # 精确 tag 被拒（denied/manifest unknown）→ 尝试拉 repo:latest 并回打原 tag
+                    images = await self.get_module_images(module_id)
+                    candidates = [
+                        img for img in images
+                        if "@" not in img and img.rpartition(":")[0] and img.rpartition(":")[2] != "latest"
+                    ]
+                    degraded = await self._fallback_pull_latest(images) if candidates else []
+                    if candidates and len(degraded) == len(candidates):
+                        detail = "; ".join(degraded)
+                        logger.info(f"Latest-tag fallback for {module_id}: {detail}")
+                        return 0, f"[latest-fallback] 精确 tag 拉取被拒，已降级 latest 并回打原 tag: {detail}", stderr
                 logger.warning(f"Image pull failed for {module_id} after {max_retries} attempts")
                 return rc, stdout, stderr
             delay = base_delay * (2 ** attempt)
@@ -233,6 +246,40 @@ class DockerManager:
             await asyncio.sleep(delay)
         # unreachable, but satisfy type checker
         return rc, stdout, stderr
+
+    async def _fallback_pull_latest(self, images: list) -> list:
+        """F3：对非 latest 镜像引用执行 tag 降级（pull repo:latest + tag 回原引用）
+
+        返回成功降级的镜像明细列表（如 'repo:1.0 ← repo:latest'）。
+        单个镜像降级失败不影响其他镜像，由调用方判断是否全部成功。
+        """
+        degraded = []
+        for image in images:
+            if "@" in image:  # digest 引用不降级
+                continue
+            repo, sep, tag = image.rpartition(":")
+            if not sep or not repo or tag == "latest":
+                continue
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "pull", f"{repo}:latest",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=600)
+                if proc.returncode != 0:
+                    continue
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "tag", f"{repo}:latest", image,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=30)
+                if proc.returncode != 0:
+                    continue
+                degraded.append(f"{image} ← {repo}:latest")
+                logger.info(f"Image latest-fallback: pulled {repo}:latest and tagged as {image}")
+            except (asyncio.TimeoutError, OSError):
+                continue
+        return degraded
 
     async def get_module_images(self, module_id: str) -> list:
         """列出模块 compose 引用的镜像（docker compose config --images）"""
