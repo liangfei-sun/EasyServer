@@ -91,6 +91,10 @@ async def _run_install_task(module_id: str, config: dict, cm: ConfigManager, dm:
         prepared = await dm.prepare_single_file_mounts(module_id, config)
         for action in prepared:
             task["log"].append(action)
+        # AB：预创建数据目录并修正属主（root 属主目录会导致 uid1000 应用写入 403）
+        data_prepared = await dm.prepare_data_dirs(module_id)
+        for action in data_prepared:
+            task["log"].append(action)
 
         # 阶段 1：拉取镜像（大镜像耗时长，失败多为网络/镜像问题）
         task["stage"] = "pull"

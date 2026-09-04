@@ -650,6 +650,66 @@ class DockerManager:
                     actions.append(f"警告：预创建 {host_path} 失败: {err}")
         return actions
 
+    async def prepare_data_dirs(self, module_id: str) -> list:
+        """安装前预创建模块数据目录并修正属主为 uid 1000（AB）
+
+        docker daemon 为不存在的 bind 源创建的目录属主为 root:root，以
+        uid 1000 运行的镜像（filebrowser 等）首启写入即 EACCES（API 呈现 403）。
+        经 docker compose config 渲染解析 bind 挂载（变量插值与 up 实际一致），
+        仅对运行时数据根（DATA_DIR / PROJECT_ROOT）之下、宿主不存在的新建目录
+        chown 1000:1000；已存在目录一律不触碰（避免破坏 postgres 类
+        非 1000 属主数据，其镜像入口会自行 chown）。只读挂载与单文件挂载
+        （F4 prepare_single_file_mounts 负责）跳过。core 进程以 root 运行且
+        数据根为宿主 bind 挂载，chown 直接生效于宿主。
+        返回动作描述列表（供安装日志展示）。
+        """
+        actions = []
+        try:
+            rc, stdout, stderr = await self._async_run_compose(module_id, "config", check=False)
+        except Exception as e:
+            logger.warning(f"Module {module_id} prepare_data_dirs: compose config failed: {e}")
+            return actions
+        if rc != 0:
+            logger.warning(f"Module {module_id} prepare_data_dirs: compose config rc={rc}")
+            return actions
+        try:
+            compose = yaml.safe_load(stdout) or {}
+        except yaml.YAMLError as e:
+            logger.warning(f"Module {module_id} prepare_data_dirs: parse config failed: {e}")
+            return actions
+        data_root = (os.environ.get("DATA_DIR_HOST") or os.environ.get("DATA_DIR") or "/data").rstrip("/")
+        project_root = (os.environ.get("PROJECT_ROOT_HOST") or str(self.project_root)).rstrip("/")
+        roots = [data_root, project_root]
+        for svc in (compose.get("services") or {}).values():
+            volumes = (svc.get("volumes") or []) if isinstance(svc, dict) else []
+            for vol in volumes:
+                if not isinstance(vol, dict):
+                    continue
+                if vol.get("type") not in (None, "bind") or vol.get("read_only"):
+                    continue
+                source = str(vol.get("source") or "")
+                if not source.startswith("/"):
+                    if source.startswith(("./", "../")):
+                        source = str((self.modules_dir / module_id / source).resolve())
+                    else:
+                        continue  # 命名卷由 daemon 管理
+                if Path(source).suffix.lower() in self._CONFIG_FILE_SUFFIXES:
+                    continue  # 单文件挂载由 F4 处理
+                if not any(source.startswith(r + "/") for r in roots):
+                    continue  # 仅运行时数据根之下
+                p = Path(source)
+                if p.exists():
+                    continue  # 已存在目录不触碰（避免破坏既有属主）
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                    os.chown(p, 1000, 1000)
+                    actions.append(f"预创建数据目录并修正属主 1000:1000: {source}")
+                    logger.info(f"Module {module_id} data dir prepared with owner 1000:1000: {source}")
+                except OSError as e:
+                    logger.warning(f"Module {module_id} data dir prepare failed for {source}: {e}")
+                    actions.append(f"警告：数据目录 {source} 预创建/chown 失败: {e}")
+        return actions
+
     async def async_get_module_status(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "ps", "-a", "--format", "json", check=False)
         containers = []
