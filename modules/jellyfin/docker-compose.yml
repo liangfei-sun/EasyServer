@@ -5,9 +5,10 @@ services:
     image: jellyfin/jellyfin:10.9.13
     container_name: easyserver-jellyfin
     network_mode: ${JELLYFIN_NETWORK_MODE:-host}
-    # bridge 模式下映射宿主端口到容器 8096；host 模式下 daemon 丢弃 ports（仅告警，行为不变）
+    # bridge 模式下映射宿主端口到容器 8096（仅绑 127.0.0.1，与模块默认内敛语义一致，
+    # 局域网访问请走反代或 host 模式）；host 模式下 daemon 丢弃 ports（仅告警，行为不变）
     ports:
-      - "${JELLYFIN_PORT:-8096}:8096"
+      - "127.0.0.1:${JELLYFIN_PORT:-8096}:8096"
     volumes:
       - ${DATA_DIR}/jellyfin/config:/config
       - ${DATA_DIR}/jellyfin/cache:/cache
