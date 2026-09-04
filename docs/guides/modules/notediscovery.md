@@ -1,137 +1,137 @@
-# NoteDiscovery 笔记 · 运行指南
+# 10 分钟拥有自己的笔记本：NoteDiscovery 从安装到写下第一篇笔记
 
-> 基于 2026-09-04 WSL Ubuntu 24.04 实测（QA 报告 R19）。实测结论与上游描述不一致处，以实测为准并已标注。
-> **重要预警：实测确认本模块存在单文件挂载陷阱第 2 例（缺陷 U，P1）：首装 `up` 必败，且 `touch` 空配置文件后应用仍崩溃——当前版本按上游默认流程无法直接使用**，本文如实记录已验证的边界。
+> 你将达成：在面板上装好 NoteDiscovery、用自己的密码登录、写下第一篇 Markdown 笔记、全文搜索命中、并知道笔记文件躺在磁盘哪里 ｜ 预计耗时 5–15 分钟（镜像已在本地时安装仅 23 秒；首次安装需从 GitHub 拉取约 284 MB 镜像，实测约 4 分钟） ｜ 适用版本 v0.3.0+（含截至 commit 4071298 的 9 项体验修复）
 
-## 1. 概述
+本教程所有步骤与数字来自真实安装与使用实测（创建 959 字笔记 → 编辑至 2042 字 → 搜索命中 → 磁盘文件逐字节核对一致）。你只需要一个跑着的 EasyServer 面板（没有的话先看[安装指南](../INSTALL_GUIDE.md)）。
 
-NoteDiscovery 是基于 Markdown 的在线笔记管理工具，支持实时预览编辑、全文搜索、附件管理与密码认证。
+---
 
-| 项 | 值 |
-|------|------|
-| 镜像 | `ghcr.io/gamosoft/notediscovery:latest`（ghcr 直连链路，不受 Docker Hub mirror 白名单影响） |
-| 分类 | notes |
-| 网络模式 | bridge（端口映射） |
-| 端口 | 宿主 `NOTEDISCOVERY_PORT`（默认 8000）→ 容器 8000 |
-| 资源限制 | 内存 256m / CPU 1.0 |
-| 容器名 | `easyserver-notediscovery` |
-| 内置 healthcheck | 无 |
+## 第 1 步：在应用商店安装
 
-## 2. 前置条件
+- **操作**：登录管理面板 → 「应用商店」→ 在"笔记"分类找到 NoteDiscovery → 点「安装」→ 填写配置：
 
-- 核心引擎运行中；无硬依赖模块（soft_depends_on: nginx、acme）
-- **端口检查**：8000 需可用。实测环境 8000 被 Windows 侧进程占用（WSL2 mirrored），改用 `NOTEDISCOVERY_PORT=18000`
-- **认证凭据**：`NOTEDISCOVERY_PASSWORD`（登录密码）与 `NOTEDISCOVERY_SECRET_KEY`（会话密钥）按 module.yaml 声明"留空自动生成"，**实测 API/compose 层均无自动生成逻辑**（与 backup 缺陷 O 同族）；且 compose 内置了上游遗留的默认密码值——**安装时务必显式传入这两项**
+| 配置项 | 填什么 | 说明 |
+|---|---|---|
+| `NOTEDISCOVERY_PORT` | 默认 `8000`；**被占用就换**（实测环境 8000 被 Windows 占用，改填 `18000`） | 服务端口，安装后用 `http://127.0.0.1:<端口>` 访问 |
+| `NOTEDISCOVERY_AUTH_ENABLED` | 保持开启 | 启用登录认证 |
+| `NOTEDISCOVERY_PASSWORD` | **填你自己的密码**（如 `MyNote-2026!`） | 留空会自动生成随机密码（在安装日志里找）；自己填的更好记 |
+| `NOTEDISCOVERY_SECRET_KEY` | 留空即可 | 会话密钥，留空自动生成 |
 
-## 3. 安装
+点「安装」后不要关页面。
 
-### 3.1 配置字段
+- **你会看到**：安装任务以**四阶段进度**推进，每阶段日志实时可见（修复后行为）：
+  1. **prepare**：引擎替你把"坑"填好——日志出现 `预创建配置文件 /data/notediscovery/config.yaml（模板渲染 config.yaml.j2）`（用你刚填的密码渲染好配置），以及 `预创建数据目录并修正属主 1000:1000: /data/notediscovery/data`
+  2. **pull**：拉取镜像。本地已有 → `[local-hit] 镜像本地已存在，跳过拉取`（秒过）；首次 → 从 GitHub 拉取 284 MB（实测约 4 分钟）
+  3. **up**：启动容器
+  4. **health**：健康门控——确认应用真的活着（而不是"进程起了就算成功"）
 
-| 字段 | 说明 | 默认值 | 必填 |
-|------|------|--------|:---:|
-| `NOTEDISCOVERY_PORT` | 服务端口（宿主侧） | 8000 | 是 |
-| `NOTEDISCOVERY_AUTH_ENABLED` | 启用登录认证 | true | 否 |
-| `NOTEDISCOVERY_PASSWORD` | 登录密码（声明留空自动生成，实测无生成逻辑） | 空 | 否 |
-| `NOTEDISCOVERY_SECRET_KEY` | 会话密钥（同上） | 空 | 否 |
+  实测时间线（镜像本地命中）：`pull(t+0) → up(t+11) → health(t+14) → success(t+23)`。
+- **截图**：![应用商店模块列表](../../images/module-store.png)（安装进度页暂无截图：形态为四阶段标题 + 日志逐行滚动）
+- **排错**：
 
-### 3.2 安装路径与实测行为（首装必败）
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 安装失败：`address already in use`（端口绑定） | 默认端口 8000 被占。WSL2 mirrored 模式下 **Windows 侧占用的端口在 WSL 里查不到**（实测 8000 被 Windows 进程占用，首次安装即失败于此） | 卸载失败实例，用 `18000` 等空闲端口重装（实测一次成功）。排查：`/mnt/c/Windows/System32/netstat.exe -ano \| findstr 8000` |
+| 安装失败，stage=`health`，error 含大段日志 | 应用启动后崩溃（健康门控拦下，报真实原因） | 按下方 6.1 排查配置文件是否正常；确认后重装 |
+| 卡在 pull 很久 | ghcr.io 直连较慢（无加速） | 耐心等（引擎含重试）；失败会如实报错，重试安装即可续传层缓存 |
 
-**面板/API 安装（实测失败）**：首次安装终态 `failed(up)`，错误信息可诊断性好：
+---
 
-```
-error mounting "/data/notediscovery/config.yaml" ... not a directory:
-Are you trying to mount a directory onto a file (or vice-versa)?
-```
+## 第 2 步：登录（密码就是你在面板填的那个）
 
-根因（缺陷 U）：compose 将 `${DATA_DIR}/notediscovery/config.yaml` 以**单文件方式挂载**到容器 `/app/config.yaml`，引擎不预创建该文件 → Docker 自动创建**同名目录** → 挂载冲突，`up` 直接失败（比 ddns-go 陷阱更彻底——容器都起不来）。
+- **操作**：浏览器打开 `http://127.0.0.1:18000`（你的端口）→ 输入**安装时填写的密码** → 登录。
+- **你会看到**：登录成功进入笔记主页；输错密码时回到登录页并提示密码错误。
+- **截图**：暂无（登录页为标准 Web 表单，仅密码输入框 + 登录按钮，待模块 UI 截图补齐）。
+- **排错**：
 
-**实测变通与边界**（命令中 `<DATA_DIR>` 默认安装为容器内路径映射 `/data`，按安装指南 4.2 自定义 DATA_DIR 的用户请替换）：
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 用面板填的密码登录失败？ | 修复前（commit 6575490 之前）存在占位值压制问题：面板填的密码不生效，实际生效的是内部占位值 `change_me_notes`（**缺陷 AA，已修复**） | 确认版本含该修复后重装模块（重装时重新写入密码）；旧版本临时解法：用占位密码 `change_me_notes` 登录 |
+| 密码忘了，去哪查 | 密码记录在三处（任选其一）：① 面板「应用」→ NoteDiscovery → 安装详情/配置记录；② 宿主配置文件 `/data/notediscovery/config.yaml` 的 `password` 字段（实测渲染内容与安装填写值一致）；③ 容器环境变量：`sg docker -c "docker exec easyserver-notediscovery env \| grep AUTHENTICATION"` 输出 `AUTHENTICATION_PASSWORD=<你的密码>` | 查到后直接登录 |
+
+---
+
+## 第 3 步：写下第一篇笔记
+
+- **操作**：主页点击「新建笔记」（或新建按钮）→ 起个标题（如《我的第一篇笔记》）→ 在编辑器里写 Markdown（支持分节、列表、代码块）→ 保存。想改就再打开继续编辑——实测一篇 959 字的笔记编辑追加至 2042 字，全程顺畅。
+- **你会看到**：保存后笔记出现在列表中；重新打开内容完整。
+- **截图**：暂无（编辑器为标准 Markdown 双栏界面，待模块 UI 截图补齐）。
+- **排错**：
+
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 新建/保存报错 403 或 500 | 笔记数据目录权限问题（正常情况不会发生：安装时引擎已把数据目录属主修正为 1000:1000） | `sg docker -c "docker exec easyserver-notediscovery ls -la /app/data"` 看是否可写；宿主侧 `ls -ln /data/notediscovery/data` 应为 `1000:1000` |
+
+---
+
+## 第 4 步：全文搜索，找回你写过的每个字
+
+- **操作**：顶部搜索框输入关键词（如你笔记里写过的词）→ 回车。
+- **你会看到**：命中结果列表，关键词位置**高亮标记**；实测搜索"编辑实测"一词精确命中笔记内 2 处（正文第 48/50 行）。搜索覆盖新建与编辑后的全部内容（全文索引）。
+- **截图**：暂无（待模块 UI 截图补齐）。
+- **排错**：搜索无结果 → 确认关键词确在笔记中；刚保存的笔记索引有秒级延迟，稍候重试。
+
+---
+
+## 第 5 步：你的笔记躺在磁盘哪里（顺便验证一下）
+
+- **操作**：回到宿主终端：
 
 ```bash
-# 变通：预创建空配置文件后重装（install 可 success）
-sudo mkdir -p <DATA_DIR>/notediscovery
-sudo touch <DATA_DIR>/notediscovery/config.yaml
+# 笔记以纯 Markdown 文件存储（目录以你的 DATA_DIR 为准，默认渲染为 /data）
+ls -la /data/notediscovery/data/
+# 看一眼内容（就是普通 .md 文本文件）
+head -10 /data/notediscovery/data/*.md
 ```
 
-实测 touch 空文件后 install 成功、容器 `Up (health: starting)`，**但应用随即崩溃**——空 config.yaml 解析为 None，Python 启动即抛 `TypeError: 'NoneType' object is not subscriptable`（`config['app']['version']`）。
+- **你会看到**：每个笔记对应一个 `.md` 文件。实测核对：一篇 2042 个中文字符的笔记，磁盘文件 5094 字节（UTF-8 编码），内容与应用内读取**逐字节一致**（md5 比对完全相同）。
+- **截图**：无。
+- **排错**：
 
-**实测结论**：`touch 空文件`不够，容器内 `/app/config.yaml` 需要**上游应用要求的合法配置结构**。正确做法是从容器镜像内提取默认配置模板：
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 在 `/easyserver_data/notediscovery/data` 找不到 | 数据目录由 `.env` 的 `DATA_DIR` 渲染决定，默认 `/data/notediscovery/data`（容器内外同路径，因为是 bind 挂载） | `sg docker -c "docker inspect easyserver-notediscovery --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'"` 查实际挂载 |
+
+---
+
+## 第 6 步：备份与卸载（知道怎么来，也要知道怎么走）
+
+- **操作**：
 
 ```bash
-# 从镜像中取出合法默认配置（容器可临时启动一次 export，或用 docker create + docker cp）
-sg docker -c "docker create --name nd-tmp ghcr.io/gamosoft/notediscovery:latest"
-sg docker -c "docker cp nd-tmp:/app/config.yaml /tmp/config.yaml"
-sg docker -c "docker rm nd-tmp"
-sudo cp /tmp/config.yaml <DATA_DIR>/notediscovery/config.yaml   # 覆盖空文件后再安装/启动
+# 备份 = 拷贝这一个目录（纯文本，随意打包）
+tar czf notes-backup-$(date +%F).tar.gz /data/notediscovery/
+
+# 卸载模块（面板：应用 → NoteDiscovery → 卸载）
+#   不勾选"删除数据" → 容器停掉，/data/notediscovery/ 全部保留，重装后笔记原样回来
+#   勾选"删除数据"   → 笔记一并删除（三思）
 ```
 
-> 以上提取命令为按缺陷修复方向整理的操作路径，其中"install 前预创建文件可行"为实测结论；从镜像提取默认配置的命令未在 QA 中执行，如失败请以容器内实际路径为准排查。
+- **你会看到**：卸载后面板服务列表中模块消失。**注意**：卸载会把模块的 Docker 镜像一并删除（现有行为，如实告知）——重装需重新拉取镜像（数据不受影响，只要没勾删除数据）。
+- **截图**：无。
+- **排错**：无。
 
-## 4. 启动与验证
+---
 
-修复配置后：
+## 验证清单
 
-```bash
-sudo docker ps --filter name=easyserver-notediscovery    # 预期 Up
+- [ ] 安装四阶段（prepare/pull/up/health）全部通过，日志含"预创建配置文件"与"修正属主 1000:1000"
+- [ ] 用**安装时填写的密码**登录成功（`http://127.0.0.1:<你的端口>`）
+- [ ] 新建并编辑一篇笔记，保存后内容完整
+- [ ] 搜索关键词命中且高亮
+- [ ] `/data/notediscovery/data/` 下能看到对应的 `.md` 文件
+- [ ] 做过一次 `tar` 备份；知道"卸载不删数据、删镜像"
 
-# 引擎侧健康检查 URL（module.yaml）
-curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/
-# 实测（空配置崩溃态）输出：000（无响应）；配置合法后预期 200
-```
+## 完成后你可以……
 
-**初始账号**：启用认证时使用安装时设置的 `NOTEDISCOVERY_PASSWORD` 登录（无默认账号）。QA 实测因需合法 config 模板未完成功能层验证（不死等原则），登录后功能以应用实际表现为准。
+- **给笔记本配个域名**：`https://notes.你的域名` 的反代配置见[网络配置指南](../NETWORK_CONFIG_GUIDE.md)第 4 步（实测 notes 子域反代 303 直达登录页）。
+- **继续装其他模块**：回[安装指南](../INSTALL_GUIDE.md)第 5 步的通用安装流程，13 个模块任选。
+- **了解排错背后的原理**：本教程排错表对应的引擎修复（配置文件预创建、密码贯通、目录属主修正）细节见项目 `docs/` 与发布说明。
 
-## 5. 访问方式
+## 附：三个历史坑的"修复前后对照"（帮助老用户理解排错表的来历）
 
-- **直连**：`http://<服务器IP>:<NOTEDISCOVERY_PORT>`（默认 8000）
-- **nginx 反代子域名**：域名反代/混合路由模式下 `https://notes.你的域名:8443`（`access.subdomain: notes`）
-- **Cloudflare Tunnel**：Tunnel 模式下发布后经 `https://notes.你的域名` 免端口访问
-
-## 6. 数据与备份
-
-| 路径 | 内容 |
-|------|------|
-| `<DATA_DIR>/notediscovery/data/` | 笔记文件（纯 Markdown，可直接备份） |
-| `<DATA_DIR>/notediscovery/config.yaml` | 应用配置（**必须是文件**，含认证配置） |
-
-备份方法：打包 data 目录与 config.yaml 即可。
-
-## 7. 卸载
-
-- 面板卸载或 `POST /api/modules/uninstall`；实测返回 `removed_paths:["/app/data/notediscovery"]`（容器内前缀，缺陷 F 族），宿主 `<DATA_DIR>/notediscovery`（含 data/ 子目录）**残留**
-- **实测警告（缺陷 D 第 9 例）**：卸载会**自动删除 ghcr 镜像**（272MB，ghcr 同样被波及），重装需重新拉取
-
-## 8. FAQ
-
-**Q：面板安装报 `not a directory` 挂载错误？**
-单文件挂载陷阱：预创建 `<DATA_DIR>/notediscovery/config.yaml` 真文件后重装（见 3.2）。
-
-**Q：预创建空文件后安装成功但服务无响应？**
-空配置导致应用启动即崩（实测 `TypeError: 'NoneType' object is not subscriptable`）。需放入合法默认配置（镜像内自带 config.yaml，按 3.2 提取），`docker logs easyserver-notediscovery` 确认无 Python 崩溃栈。
-
-**Q：忘记密码怎么办？**
-上游口径：在模块配置中重新设置密码，重启服务生效。
-
-**Q：笔记数据在哪？如何备份？**
-`<DATA_DIR>/notediscovery/data/`，均为 Markdown 文件，随时打包备份。
-
-## 9. 实测排错
-
-实测环境：WSL2 mirrored（8000 被占，改 18000）。关键证据摘录：
-
-```
-# 首次 install 失败（up 阶段）
-Error response from daemon: failed to create task for container: ...
-error mounting "/data/notediscovery/config.yaml" to rootfs at "/app/config.yaml":
-mount src=/data/notediscovery/config.yaml ... not a directory: Are you trying to
-mount a directory onto a file (or vice-versa)?
-# touch 变通后 install success，应用崩溃
-$ docker logs easyserver-notediscovery
-  File "/app/backend/main.py", line 94, in <module>
-    config['app']['version'] = version
-TypeError: 'NoneType' object is not subscriptable
-# uninstall
-{"success":true,...,"removed_paths":["/app/data/notediscovery"]}
-```
-
-> 正面记录：ghcr.io 拉取链路健康（272MB 手动拉取成功，直连不经 Docker Hub mirror 白名单）；install 对 required 字段缺失返回 400 语义正确（传错键名 `NOTE_DISCOVERY_PORT` 时报 `"字段「服务端口」为必填项"`）。
+| 坑 | 修复前的表现（老版本） | 修复后的表现（当前版本） |
+|---|---|---|
+| 配置文件变目录（单文件挂载陷阱，F4 修复） | 首次安装**必失败**：Docker 把不存在的配置文件挂载源创建成**目录**，应用把目录当配置读直接崩溃；手动 touch 空文件后安装能过、应用仍崩 | 安装 prepare 阶段自动渲染模板生成合法配置（含你填的密码），全阶段一次通过 |
+| 面板密码不生效（占位值压制，AA 修复） | 面板填的密码被容器内置占位值 `change_me_notes` 压制，登录凭据与面板脱节 | 安装 config 值真实生效：渲染文件与容器环境变量均为你填的值 |
+| 数据目录 root 属主（AB 修复） | 数据目录由 Docker 兜底创建为 root 属主，应用（uid 1000）写入 403 | 安装 prepare 阶段预创建并 `chown 1000:1000`，写入无障碍 |

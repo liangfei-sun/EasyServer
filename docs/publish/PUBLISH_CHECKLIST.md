@@ -102,6 +102,19 @@ EasyServer 推广物料 · 发布操作清单（本文件为内部操作手册�
 
 **背景（重要）**：仓库 `.gitignore` 含 `# 截图文件 *.png` 规则，新截图需 `git add -f` 强制入库。2026-09-04 已入库 6 张面板截图（login / panel-home / module-store / network-config / settings / setup-wizard，`docs/images/` 共 9 张跟踪 png），稿件中可用素材已按相对路径 `../../images/<文件名>` 嵌入（稿件位于 `docs/publish/<平台>/` 二级目录，故为两层）；**发布前仍需将图片上传图床并替换为外链**（多数平台不解析仓库相对路径，且需防防盗链 403）。其余无素材占位符（docker-version / build-log / health-check / compose-ps）保留待补截图。
 
+**教程打样状态（2026-09-05，Phase T）**：`docs/guides/` 三篇已按「新手用户旅程」风格重写（INSTALL_GUIDE / NETWORK_CONFIG_GUIDE / modules/notediscovery，就地覆盖，旧稿在 git 历史），统一骨架：步骤制（操作 / 你会看到 / 截图 / 排错表）+ 验证清单 + 下一步指引；排错表收编实测缺陷修复前后对照（F1 健康门控 / F2 本地命中 / F3 tag 降级 / F4 单文件预创建 / AA 密码贯通 / AB 目录属主 + R32 反代排错六条）。**评审通过后需同步 4 篇平台稿**（csdn/INSTALL_TUTORIAL、csdn/NETWORK_TUTORIAL、zhihu/ANSWER_DRAFT、juejin/QUICKSTART）。
+
+**待补模块 UI 截图（浏览器代理，待用户开浏览器面板后补）**：
+
+| 待补截图 | 目标位置 | 数量 |
+|---|---|---|
+| notediscovery 登录页 | guides/modules/notediscovery.md 第 2 步 | 1 |
+| notediscovery 编辑器（写笔记中） | 同上第 3 步 | 1 |
+| notediscovery 搜索结果（关键词高亮） | 同上第 4 步 | 1 |
+| 安装进度页（prepare→pull→up→health 四阶段日志） | guides/INSTALL_GUIDE.md 第 5 步 + notediscovery.md 第 1 步（现为文字描述位） | 1（两处复用） |
+
+截图到位后在三篇教程的「截图」行补相对路径引用（guides/ 用 `../images/`、guides/modules/ 用 `../../images/`）；发布平台稿时仍需上传图床换外链。
+
 **图床选型（任选其一）**：
 - **SM.MS**：免费额度即可用，注册后上传拿 https 直链，适合轻量使用
 - **阿里云 OSS**（或腾讯云 COS）：稳定可控，需创建 Bucket（公共读）、建议配置防盗链与生命周期

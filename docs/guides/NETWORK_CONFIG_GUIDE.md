@@ -1,307 +1,254 @@
-# EasyServer 网络配置指南
+# 让你的服务被访问到：从 localhost 到域名 HTTPS 反代的完整路线图
 
-> 面向用户讲清楚「网络配置」页面的每一种玩法，并如实标注 **QA 实测确认的系统行为**（含与预期不同的行为差异）。上游完整文档见 `docs/network-config.md`，本文为其场景化教程版。
->
-> 适用版本：EasyServer v0.3.0 · 实测环境：WSL2 Ubuntu 24.04，零模块基线 + JWT 认证。
+> 你将达成：搞清楚四种访问模式怎么选，并亲手打通"浏览器输入域名 → 自动 HTTPS → 访问面板与模块"的完整链路 ｜ 预计耗时 30–45 分钟（含一次 nginx 模块安装约 3 分钟） ｜ 适用版本 v0.3.0+（含截至 commit 4071298 的 9 项体验修复）
 
----
-
-## 目录
-
-- [1. 功能概述与入口](#1-功能概述与入口)
-- [2. 访问模式对比与切换预警](#2-访问模式对比与切换预警)
-- [3. 双源配置结构（config.yaml + .env）](#3-双源配置结构configyaml--env)
-- [4. 场景一：域名反代（domain）](#4-场景一域名反代domain)
-- [5. 场景二：IPv6 直连（ipv6_direct）](#5-场景二ipv6-直连ipv6_direct)
-- [6. 场景三：Cloudflare Tunnel](#6-场景三cloudflare-tunnel)
-- [7. 场景四：智能混合路由（hybrid）](#7-场景四智能混合路由hybrid)
-- [8. 场景五：自由配置（custom）](#8-场景五自由配置custom)
-- [9. 域名管理](#9-域名管理)
-- [10. 端口检查（port-check）](#10-端口检查port-check)
-- [11. SSL 证书与 Nginx 反代流程](#11-ssl-证书与-nginx-反代流程)
-- [12. 实测排错与已知行为差异](#12-实测排错与已知行为差异)
-- [13. FAQ 精选](#13-faq-精选)
+本指南的每条链路断言（200/301/303/444）与排错方法都来自 WSL2 mirrored 网络下的真实实测（自签证书 + /etc/hosts 域名场景）。没有真实域名和 DNS 凭据也能完整走通本教程。
 
 ---
 
-## 1. 功能概述与入口
+## 开始前：你需要什么
 
-「网络配置」（侧边栏入口，路由 `/network`）是所有网络功能的统一入口：选择访问方式、域名与 DNS 管理、服务发布、SSL 证书。
-
-页面结构从上到下：网络状态总览 → 当前模式的管理区 → Tunnel 中转服务卡片 → 高级选项（折叠，含切换访问方式）→ 域名信息。
-
-所有配置操作既可通过 Web 面板完成，也可通过 REST API（`/docs` 有完整 Swagger UI）操作，本文同时给出两种方式。
+- 已按[安装指南](INSTALL_GUIDE.md)跑起管理面板（本指南以 `http://localhost:8901` 为例）
+- 明确一个事实：**模块装好后默认监听 `127.0.0.1:<端口>`**（如面板 8901、notediscovery 18000），本机就能访问；要被"别的设备"或"域名"访问，才需要后面的步骤
 
 ---
 
-## 2. 访问模式对比与切换预警
+## 第 1 步：搞清楚四种访问模式，选一个
 
-### 2.1 四种自动模式对比（含实测行为）
+- **操作**：面板左侧「网络配置」→ 查看访问模式选择器。四种自动模式的实测行为：
 
-| 模式 | `ACCESS_MODE` 值 | 前提条件 | 实测 `BIND_ADDRESS` 行为 | 切换副作用（实测） |
-|------|------|---------|------|------|
-| 域名反代 | `domain` | 域名 + DNS 凭证 + 服务器公网可达 | `127.0.0.1`（还原/保持仅本机） | **自动安装并启动** Nginx、ACME、DDNS 模块 |
-| Cloudflare Tunnel | `cloudflare_tunnel` | 域名托管 Cloudflare + API Token | `127.0.0.1` | **自动启动** cloudflare-tunnel 容器、停用 Nginx/ACME |
-| IPv6 直连 | `ipv6_direct` | 服务器有公网 IPv6 | **`'::'`**（IPv6 全零地址，监听所有接口含 IPv6；**非 `0.0.0.0`**） | 停止代理类模块、重启已装模块；`network_configured→True` |
-| 智能混合路由 | `hybrid` | 域名 + DNS 凭证 + CF Tunnel Token | `127.0.0.1` | **domain 全部动作 + 自动触发后台 DNS 同步 + 启动 cloudflare-tunnel** |
+| 模式 | 适用场景 | 实测行为 |
+|---|---|---|
+| domain（域名反代） | 有域名，想用 HTTPS 与子域名 | 需自备 DNS/证书凭据；未装 nginx 时仅保存配置（见第 5 步） |
+| ipv6_direct | 有公网 IPv6 | 实测保存后 `BIND_ADDRESS='::'`（而非 0.0.0.0），IPv6 直连各模块端口 |
+| cloudflare_tunnel | 无公网 IP，想借 Cloudflare 隧道 | 需 Tunnel 凭据；隧道服务以卡片形式接入 |
+| hybrid | 多种条件并存 | 智能混合路由；DNS 同步项无凭据时显示"跳过" |
+| custom | 想完全手动控制 | 只保存你的自由配置，引擎不代劳 |
 
-> 第五种 `custom`（自由配置）见第 8 节，实测切换无模块副作用，`BIND_ADDRESS` 还原为 `127.0.0.1`。
+- **你会看到**：模式选择器高亮当前模式；切换时有确认提示。
+- **截图**：![访问模式选择器](../images/mode-selector.png) ![网络配置页](../images/network-config.png) ![网络配置总览](../images/network-config-overview.png)
+- **排错**：
 
-### 2.2 切换前必读预警（实测确认）
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 切换模式后部分功能显示"跳过"/BLOCKED | 相关功能（DNS 解析、证书签发、隧道）需要云服务商凭据，凭据为空时跳过属预期行为 | 先按第 2–4 步把本地链路走通，凭据配置见第 5 步 |
 
-1. **domain / hybrid 切换会真实安装并启动模块**：系统把未安装的 Nginx、ACME、DDNS（hybrid 另加 Cloudflare Tunnel）写入 `installed_modules` 并执行 `docker compose up`，**触发镜像拉取**，首次切换可能持续数分钟，页面显示全屏提示「正在切换访问方式…请勿关闭页面」属正常现象。
-2. **失败会残留状态**：实测源码确认，模块写入 `installed_modules` 发生在启动动作之前，若镜像拉取失败或启动出错，已写入的安装状态不会自动回滚。
-3. **无 Token 切到 cloudflare_tunnel 会让 cloudflared 反复崩溃**：实测源码确认，未配置 Tunnel Token 时切换会直接启动无 token 的 cloudflared 容器（crash loop 残留）并触发镜像拉取。**务必先在凭证中配好 Token 再切换。**
-4. **DNS 凭证为空时不要切 domain/hybrid**：DNS 同步与证书申请都会失败；hybrid 还会立即触发一次后台 DNS 同步。
-5. UI 上通过「高级选项 → 切换访问方式」按钮切换，与 API `POST /api/config/network {"access_mode":"..."}` 等价。
-
----
-
-## 3. 双源配置结构（config.yaml + .env）
-
-EasyServer 使用**双源分层配置**，理解这点能避开绝大多数凭证类问题：
-
-| 文件 | 职责 | 内容举例 |
-|------|------|---------|
-| `data/config.yaml` | 核心运行配置：网络模式、域名、DNS 凭证、模块列表 | `access_mode`、`domain`、`dns_credentials` |
-| `.env`（挂载卷内运行时副本） | 环境变量：路径、域名、凭证、模块专用配置 | `ACCESS_MODE`、`BIND_ADDRESS`、`ALI_KEY` |
-
-**实测确认的联动行为**：
-
-- 通过面板/API **切换访问模式**时，系统自动把 `ACCESS_MODE`、`BIND_ADDRESS`、`HTTPS_PORT` 同步写入 `.env`（实测 `ipv6_direct` 切换后 `.env` 中出现 `ACCESS_MODE='ipv6_direct'`、`BIND_ADDRESS='::'`）。
-- **凭证同步陷阱**：`GET /config` 会触发 `_sync_credentials_from_env()`，用 `.env` 里的凭证**覆盖** `config.yaml`。因此**修改 DNS 凭证时必须同时更新 `.env` 和 `config.yaml` 两处**，只改 `config.yaml` 会在下次读取时被回退覆盖。
-- 面板内修改凭证通常两处都会写；直接手工编辑文件时务必自己保持同步。
+> 本教程主推路线：**先本机（第 2 步）→ 再域名反代（第 4 步）**，这是零凭据也能全通的路径。
 
 ---
 
-## 4. 场景一：域名反代（domain）
+## 第 2 步：本机访问（你现在就已经在这个模式里）
 
-**适用**：有自己的域名（任意 DNS 服务商），服务器公网可达，希望大带宽直连（流量不经中转）。访问地址带 HTTPS 端口（默认 8443）。
-
-### 4.1 自备凭据清单（系统不会替你创建）
-
-| 凭据 | 用途 | 获取方式 |
-|------|------|---------|
-| 阿里云 AccessKey ID + Secret（`ALI_KEY`/`ALI_SECRET`） | DNS 记录自动同步 + ACME DNS 验证 | 阿里云 RAM 控制台创建用户，授权 `AliyunDNSFullAccess` |
-| Cloudflare API Token | 同上（Cloudflare 托管域名时） | CF Dashboard → API Tokens，需 `Zone · DNS · Edit` 权限；**`eyJ` 开头的是 Tunnel Token，不是 API Token，勿混淆** |
-
-### 4.2 配置流程
-
-1. 「网络配置」→「域名反代配置」→ 选择 DNS 提供商并填入凭证
-2. 设置 HTTPS 端口（默认 8443）与管理面板子域名
-3. 点击「保存并应用」：系统保存凭证、生成 Nginx 配置并重载
-4. 点击「立即同步 DNS 记录」：自动为所有子域名创建 A/AAAA 解析（幂等：不存在则建、一致则跳过、IP 变化则更新，天然支持 DDNS）
-5. 等待 DNS 生效（几分钟），之后通过 `https://子域名.你的域名:8443` 访问
-6. SSL 证书由 ACME 模块通过 DNS API 验证自动申请 Let's Encrypt 证书，到期前 60 天自动续签
-
-### 4.3 实测注意（nginx 未安装态的行为差异）
-
-| 操作 | 实测行为 | 结论 |
-|------|---------|------|
-| `POST /api/nginx/generate`（未装 nginx） | 返回 200「Nginx 配置已生成」，且实际落盘 3 个配置文件，**无任何"nginx 未安装"提示** | 生成≠安装；配置落盘属正常预写，真正生效需安装 nginx 模块 |
-| `POST /api/nginx/reload`（未装 nginx） | **返回 500 `{"detail":"Nginx 重载失败"}` 硬报错**，非静默跳过 | 未安装 nginx 时先安装模块再 reload；看到此 500 先检查模块是否已装 |
-
----
-
-## 5. 场景二：IPv6 直连（ipv6_direct）
-
-**适用**：无域名但服务器有公网 IPv6（云服务器需开通 IPv6），内网或信任网络使用。无需 DNS、无需证书，但**无 HTTPS 加密**。
-
-### 5.1 启用步骤
-
-1. 「网络配置」→「高级选项」→「切换到 IPv6 直连」
-   （API 等价：`POST /api/config/network {"access_mode":"ipv6_direct","https_port":8443}`，实测返回 `{"success":true,...,"message":"网络配置已保存"}`）
-2. 系统自动停止 Nginx / ACME / Tunnel 等代理模块，把服务监听地址切到所有接口，并重启已安装模块
-3. 页面展示各服务访问链接 `http://[IPv6地址]:端口`，可直接复制
-
-### 5.2 实测行为：BIND_ADDRESS 为 `'::'` 而非 0.0.0.0
-
-实测切换后 `.env` 中 `BIND_ADDRESS='::'`（IPv6 全零地址）。效果上同样是监听所有接口（含 IPv6），但如果你在其他文档或脚本里预期看到 `0.0.0.0`，请不要误判为配置错误。验证方式：
+- **操作**：什么都不用配。直接：
 
 ```bash
-docker exec easyserver-core grep -E '^(ACCESS_MODE|BIND_ADDRESS)' /app/.env
-# 实测输出：ACCESS_MODE='ipv6_direct'  BIND_ADDRESS='::'
+curl -s http://127.0.0.1:8901/api/health          # 面板
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18000   # 已装模块（端口换成你的）
 ```
 
-同时 `network_configured` 被置为 `True`。切回其他模式（实测切 `custom`）后 `BIND_ADDRESS` 还原为 `'127.0.0.1'`。
+- **你会看到**：health 返回 `{"status":"ok","service":"easyserver-core"}`；模块返回 `303`（跳登录页）或 `200`。
+- **截图**：无（无界面）。
+- **排错**：
+
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| curl 000 / 连接拒绝 | 模块没装或端口记错 | 面板「服务列表」看运行中模块与端口；或 `sg docker -c "docker ps --format '{{.Names}}\t{{.Ports}}'"` |
 
 ---
 
-## 6. 场景三：Cloudflare Tunnel
+## 第 3 步：让局域网其他设备访问（可选）
 
-**适用**：无公网 IP、443/80 被封（未备案）、追求免端口访问。服务器主动向 Cloudflare 建立出站隧道，用户走 Cloudflare 标准 443 端口，自带 SSL，访问地址不带端口号。
+- **操作**：把模块端口对宿主外的设备开放，取决于模块的网络模式：
+  - **bridge 模式模块**（大多数）：安装时端口配置项就是宿主映射端口（如 jellyfin 实测 `0.0.0.0:18096 -> 8096`），局域网设备访问 `http://<WSL主机IP>:18096`
+  - **host 模式模块**（如 nginx 默认）：容器直接用宿主网络栈，监听端口即宿主端口
+- **你会看到**：局域网设备浏览器能打开对应端口。
+- **截图**：无。
+- **排错**：
 
-### 6.1 前提（自备凭据）
-
-1. **域名已托管到 Cloudflare**（NS 记录指向 Cloudflare）
-2. **Cloudflare API Token**：需权限 `Account · Cloudflare Tunnel · Edit` + `Zone · DNS · Edit`（Dashboard → My Profile → API Tokens 创建，生成后仅显示一次，立即保存）
-
-### 6.2 接入流程
-
-1. 「网络配置」→ Cloudflare Tunnel 卡片 →「一键接入」
-2. 粘贴 API Token →「验证 Token」→ 看到「Token 有效」
-3. 点「一键接入」：弹窗逐步显示创建/复用隧道 → 启动 cloudflare-tunnel 容器 → 检查域名托管状态
-4. 「接入完成！」且网络状态显示「已连接」即成功
-
-### 6.3 发布服务
-
-「服务发布」卡片 →「可发布」页签 → 点「发布」：自动添加隧道路由（子域名 → 本地端口）并**自动创建 CNAME 记录**，发布后 `https://子域名.你的域名` 免端口访问。「取消发布」会同时删除路由与 CNAME。
-
-### 6.4 实测预警
-
-- **务必先配好 Token 再切换到本模式**。实测源码确认：无 Token 时切换（`POST /api/config/network {"access_mode":"cloudflare_tunnel"}`）会直接启动无 token 的 cloudflared 容器，进入 crash loop 残留，并触发镜像拉取。
-- 隧道要求域名的权威 DNS 必须托管在 Cloudflare，否则 `cfargotunnel.com` 的 CNAME 无法工作。主域名托管在别处时，可按第 9.3 节添加一个 Cloudflare 托管的域名专用于 Tunnel。
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 本机通、局域网不通 | 端口只绑了 127.0.0.1，或 WSL 防火墙未放行 | bridge 模块确认映射 HostIp 为 0.0.0.0（`docker port <容器名>`）；Windows 侧防火墙放行对应端口 |
+| WSL2 下其他设备访问 Windows IP 无效 | WSL2 NAT/mirrored 的端口转发问题 | mirrored 模式下 Windows 与 WSL 共享端口视图，直接访问 Windows 主机 IP 即可；NAT 模式需在 Windows 配置 portproxy（超出本文范围） |
 
 ---
 
-## 7. 场景四：智能混合路由（hybrid）
+## 第 4 步：装 nginx 模块，用域名访问（核心步骤）
 
-**适用**：既有大带宽服务（Jellyfin/Frigate/Nextcloud 等），又有轻量服务（笔记/监控面板），想按服务分流——大带宽走域名反代（带宽直达），轻量走 Tunnel 中转（免端口）。
+实测环境：Windows 占了 80 端口，所以 HTTP 用 **8080**、HTTPS 用 **8443**；域名用 `test.local`（/etc/hosts 本地解析，零成本复现）。
 
-### 7.1 概念
+### 4a. 安装 nginx 模块
 
-两种路由方式**按服务并存**，同一子域名同一时刻只走一条路：
+- **操作**：应用商店 → nginx → 填写：
 
-| 路由方式 | 流量路径 | 地址格式 |
-|---------|---------|---------|
-| 域名反代 | DNS AAAA → 服务器 IPv6 → Nginx SSL → 服务 | `https://子域名.域名:8443`（带端口） |
-| Tunnel 中转 | DNS CNAME → Cloudflare 边缘 → Tunnel → 服务 | `https://子域名.域名`（免端口） |
+| 配置项 | 值 | 说明 |
+|---|---|---|
+| `NGINX_HTTP_PORT` | `8080` | 80 被占就改这个（见排错） |
+| `NGINX_HTTPS_PORT` | `8443` | HTTPS 入口 |
+| `NGINX_NETWORK_MODE` | `host` | 默认值，保持 |
+| `SSL_EMAIL` | 你的邮箱 | 证书通知邮箱 |
 
-### 7.2 配置步骤
+- **你会看到**：安装四阶段通过，`docker ps` 里 `easyserver-nginx` 为 Up（host 模式无端口映射列，属正常）。引擎同时自动签发**自签证书**：`/easyserver_data/modules/nginx/ssl/<你的域名>/` 下生成 `fullchain.cer` 与 `test.local.key`（实测 1354B/1704B，权限 600）。
+- **截图**：无（安装页形态见安装指南第 5 步描述）。
+- **排错**：
 
-1. **先完成前置**：域名信息已填、域名反代凭证已配置、Cloudflare Tunnel 已接入（三者在前面场景中完成）
-2. 「高级选项」→ 点「智能混合路由」→ 确认切换。**首次切换会自动安装并启动 Nginx、ACME、DDNS、Cloudflare Tunnel 全套模块**，耗时数分钟，勿关页面
-3. 在「Tunnel 中转服务」卡片为每个服务点「切换为 Tunnel 中转」或「切换为 域名反代」；切换后系统自动维护 DNS（Tunnel 建 CNAME 并清理 A/AAAA，反向则由 DNS 同步补建），无需手动操作
-4. 可选：点「智能推荐」一键分流——实测推荐策略为 Frigate、Nextcloud、Jellyfin、FileBrowser、Calibre-Web 走域名反代；NoteDiscovery、Joplin、Uptime Kuma 走 Tunnel 中转
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| 安装"成功"但容器反复重启（实测缺陷 AF） | 生成的配置 `listen 80`，host 模式绑 80 撞 Windows 占用；健康门控存在瞬时存活窗口，极少数情况误报 success | 按下方 4b 改 http_port 后重启容器 |
+| 安装失败，stage=health，error 含 `cannot load certificate` | 证书路径缺失（健康门控报真因） | 检查 ssl 目录是否生成；删掉残留的错误 conf 后重装 |
 
-### 7.3 实测预警
+### 4b. 生成反代配置（把模块挂到域名上）
 
-hybrid 切换 = **domain 的全部动作**（自动装 Nginx/ACME/DDNS 并真实启动）**+ 立即触发一次后台 DNS 同步 + 启动 cloudflare-tunnel**。它是副作用最大的切换动作，DNS 凭证或 Tunnel Token 任一缺失时都不要执行；失败后 `installed_modules` 可能残留（见 2.2 预警第 2 条），需到应用商店核对模块状态。
-
-### 7.4 DNS 同步的「跳过」提示
-
-同步结果出现「跳过 N 条」表示该子域名已存在 CNAME（服务正通过 Tunnel 发布），系统主动跳过以避免同域 CNAME 与 A/AAAA 冲突——**这是保护机制，不是错误**。想让该服务改回域名反代：先在卡片中「切换为 域名反代」，再重新同步。
-
----
-
-## 8. 场景五：自由配置（custom）
-
-面向高级用户：**系统不自动管理任何网络模块**，由你自行在应用商店安装配置 Nginx、DDNS、ACME、Tunnel 等。
-
-实测切换行为：`POST /api/config/network {"access_mode":"custom"}` 返回成功后，`BIND_ADDRESS` 还原为 `'127.0.0.1'`，**无任何模块被安装或启动**——五种模式中唯一零副作用的切换，可作为误切换后的「安全回退档」。页面提供已装网络模块状态列表、启动/停止按钮与「重新生成 Nginx 配置」手动入口。
-
----
-
-## 9. 域名管理
-
-### 9.1 增查删（实测 API 行为）
-
-| 操作 | API | 实测行为 |
-|------|-----|---------|
-| 查询 | `GET /api/config/domains` | 返回域名数组，每项含 `domain`、`dns_provider`、`purpose`、`status` |
-| 添加 | `POST /api/config/domains` | 缺 `dns_provider` → **422 明确报错**；`purpose` 非法 → **400 `"purpose 必须为 nginx / tunnel / both"`**；合法添加 → 200 且**自动触发一次 verify** |
-| 验证 | `POST /api/config/domains/{domain}/verify` | 返回逐项检查结果；**凭据缺失时明确报错**（如 `"阿里云 DNS 凭证未配置"`）；见 9.2 的副作用预警 |
-| 删除 | `DELETE /api/config/domains/{domain}` | **主域名删除被拒**（400 `"不允许删除主域名"`，合理保护）；其他域名可删 |
-
-`purpose` 取值：`nginx`（域名反代）/ `tunnel`（Tunnel 中转）/ `both`（两者皆可）。
-
-### 9.2 verify 的两个实测坑
-
-1. **tunnel_dns 检查项报 `[Errno 2] No such file or directory`**：容器内缺少 DNS 工具（与 `dig` 缺失同根源），该项失败**不代表域名真有问题**，先看 dns_provider 与 ssl 两项结果。
-2. **verify 有不可逆副作用**：实测对主域名执行 verify 后，其 `status` 被从 `active` 改为 `error` 且无单独恢复途径。建议 verify 前确认凭证已配好，避免对生产域名反复 verify。
-
-### 9.3 多域名配置
-
-Tunnel 要求域名托管在 Cloudflare。主域名在阿里云等别处时，添加一个 Cloudflare 托管域名专用于 Tunnel：
-
-1. 「域名管理」→「添加域名」→ 填域名、选 Cloudflare、用途选「Tunnel 中转」
-2. 系统自动验证 DNS 连通性，通过后 Tunnel 发布时即可选择该域名
-3. 多域名时 Tunnel 服务卡片顶部出现「目标域名」下拉选择器；单域名则自动使用
-
-> 免费域名提示（上游文档结论）：并非所有免费后缀都支持 NS 迁移到 Cloudflare（如 DigitalPlat 的 `.dpdns.org`/`.qzz.io` 支持），注册前先确认可改 NS。
-
----
-
-## 10. 端口检查（port-check）
+- **操作**：面板「网络配置」→ 域名管理里确认主域名（如 `test.local`）→ 调用配置生成（面板按钮或命令）：
 
 ```bash
-# port-check 需认证：先登录换取 Token（body 只需密码），再携带 Bearer 头调用
-TOKEN=$(curl -s -X POST http://localhost:8900/api/config/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"password":"<你的管理密码>"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8900/api/services/port-check
+TOKEN=$(curl -s -X POST http://localhost:8901/api/config/auth/login \
+  -H 'Content-Type: application/json' -d '{"password":"<你的管理密码>"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
+curl -s -X POST http://localhost:8901/api/nginx/config/generate -H "Authorization: Bearer $TOKEN"
 ```
 
-实测返回结构：`{"has_conflict": false, "conflicts": [], ...}` 并**列出全部注册模块端口清单**（实测 10 个）。两个使用要点：
+- **你会看到**：生成两份配置——`default.conf`（HTTP 兜底：未知域名直接关闭连接，实测 444 行为）与 `sites.conf`（每个已安装模块一个 server 块，含 HTTPS 证书路径与反代目标端口）。nginx 容器随生成自动加载。
+- **截图**：无。
+- **排错**：见第 6 步（端口来源解析是重点）。
 
-1. **空安装态也会列出全部注册模块端口**（当前实现行为），该清单是"系统规划的端口全景"而非"已安装端口"，解读时注意。
-2. `has_conflict:true` 时逐条看 `conflicts`。WSL2 mirrored 模式用户注意：Windows 侧占用导致的冲突在 Linux 侧 `ss`/`lsof` 查不到，需用 `/mnt/c/Windows/System32/netstat.exe -ano | findstr <端口>` 在 Windows 侧排查（详见安装指南第 6 节）。
+### 4c. 配置本地域名解析并验证
 
----
+- **操作**：
 
-## 11. SSL 证书与 Nginx 反代流程
+```bash
+# 1) 备份并追加 hosts（把域名指到本机）
+sudo cp /etc/hosts /tmp/hosts.bak
+echo "127.0.0.1 test.local panel.test.local notes.test.local" | sudo tee -a /etc/hosts
 
-### 11.1 证书来源总览
+# 2) 验证（-k 表示信任自签证书）
+curl -sk -o /dev/null -w '%{http_code}\n' https://panel.test.local:8443/   # 面板
+curl -sk -o /dev/null -w '%{http_code}\n' https://notes.test.local:8443/   # notediscovery
+curl -s  -o /dev/null -w '%{http_code}\n' http://panel.test.local:8080/    # HTTP 会跳 HTTPS
+curl -s  -o /dev/null -w '%{http_code}\n' http://whatever.test.local:8080/ # 未知域名
+```
 
-| 访问方式 | 证书来源 | 你的准备工作 |
-|---------|---------|-------------|
-| Cloudflare Tunnel | Cloudflare 边缘自动签发 | 无需配置 |
-| 域名反代 / 智能混合路由 | Let's Encrypt（ACME 模块经 DNS API 验证自动申请与续签） | **自备 DNS API 凭据**（阿里云 AccessKey / CF API Token） |
-| IPv6 直连 | 无（HTTP） | — |
+- **你会看到**（实测断言）：面板 `200`；notes `303`（跳登录页，正常）；HTTP 访问面板 `301` 跳 HTTPS；**未知域名 `000`**（连接被直接关闭，即 444 兜底生效——陌生域名打不进你的服务）。
+- **截图**：无。
+- **排错**：测完可恢复 hosts：`sudo cp /tmp/hosts.bak /etc/hosts`（实测 diff 为空即复原）。
 
-### 11.2 Nginx 反代工作方式
+### 4d. 浏览器访问
 
-Nginx 容器监听 HTTPS 端口（默认 8443），按域名将请求转发到对应服务。反代配置由系统**自动生成与维护**（安装/卸载模块时自动增删配置块），也可手动「重新生成 Nginx 配置」。
-
-**proxy_pass 语义说明（早期疑点已由模块指南 R10 实测撤销，见 `docs/guides/modules/nginx.md`）**：生成的 `sites.conf` 中管理面板反代为 `proxy_pass http://127.0.0.1:8900`——nginx 默认 **host 网络模式**下直接使用宿主网络栈，`127.0.0.1:8900` 指向宿主 loopback 上的核心引擎，语义正确；WSL2 mirrored 环境下 8900 的可达性依赖宿主侧转发，属环境差异。仅当显式改用 bridge 模式时，`127.0.0.1` 才指向 nginx 容器自身，此时需将 proxy_pass 改为容器网络地址。若安装 nginx 后经域名访问面板出现 502，可通过「服务管理 → nginx → 日志」与 `<PROJECT_ROOT>/modules/nginx/conf.d/sites.conf` 核对。
-
-### 11.3 修改 HTTPS 端口
-
-修改后系统自动重启 Nginx 容器（必须重启才能绑定新端口），并注意：云服务器安全组/防火墙放行新端口、路由器转发同步更新、域名反代访问改为新端口。443 被运营商/云厂商封锁时选 8443（默认，普遍不封）或 8442/9443。
-
----
-
-## 12. 实测排错与已知行为差异
-
-以下均为 QA 实测确认的行为，遇到对应现象时**先对照本表判断是否为已知行为**，再决定是否深入排查：
-
-| # | 现象 | 级别 | 说明与应对 |
-|---|------|------|-----------|
-| 1 | nginx 未安装时 `POST /api/nginx/reload` 返回 500 | 已知行为 | 硬报错而非静默跳过；先安装 nginx 模块再 reload |
-| 2 | nginx 未安装时 `POST /api/nginx/generate` 返回 200 且落盘配置 | 已知行为 | 生成≠生效，配置为预写；安装模块后启用 |
-| 3 | 切 domain/hybrid 后未装过的模块出现在已安装列表（即使失败） | 缺陷 | `installed_modules` 先写后装、失败不回滚；到应用商店核对真实状态 |
-| 4 | 无 Token 切 cloudflare_tunnel 后出现反复重启的 cloudflared 容器 | 缺陷 | crash loop 残留；先停掉该容器、配好 Token 再重新切换 |
-| 5 | 域名 verify 的 tunnel_dns 项报 `[Errno 2] No such file or directory` | 缺陷 | 容器缺 DNS 工具；以 dns_provider/ssl 检查项为准 |
-| 6 | verify 后主域名 `status` 变 `error` 无法恢复 | 缺陷 | verify 前先确认凭证已配置；避免对生产域名反复 verify |
-| 7 | 端口检查空安装态列出全部模块端口 | 已知行为 | 清单为注册表全量，非已安装集合 |
-| 8 | ipv6_direct 切换后 `BIND_ADDRESS='::'` 而非 `0.0.0.0` | 已知行为 | `::` 即监听所有接口（含 IPv6），非配置错误 |
-| 9 | 切换访问方式页面长时间加载 | 正常现象 | 首次切换在安装并启动模块（含拉取镜像），耗时数分钟，勿关页面 |
-| 10 | DNS 同步结果「跳过 N 条」 | 正常现象 | CNAME 冲突保护机制（见 7.4） |
-| 11 | 容器内 healthcheck.sh 报 401 / exit 127 | 缺陷 | 脚本 API 检查项无认证头、依赖缺失的 `dig`；以 `/api/health` 与 compose ps 为准 |
+- **操作**：浏览器打开 `https://panel.test.local:8443/`。
+- **你会看到**：自签证书会有"不安全"警告——点"高级 → 继续访问"即可（自签场景预期行为；换真实域名 + Let's Encrypt 证书后消失）。之后就是熟悉的 EasyServer 登录页。
+- **截图**：![面板登录页](../images/login.png)
+- **排错**：浏览器报证书错误且无法继续 → 确认访问的是 8443 端口、hosts 已生效（`ping panel.test.local` 应为 127.0.0.1）。
 
 ---
 
-## 13. FAQ 精选
+## 第 5 步：真实证书（ACME / Cloudflare Tunnel）——为什么显示 BLOCKED
 
-**Q1：切换访问方式时页面一直转圈，是卡死了吗？**
-正常现象。首次切换在安装并启动相关模块（含镜像拉取），可能持续数分钟，勿关闭或刷新页面，等待「已切换到 xxx」提示。
+- **说明**：Let's Encrypt 签发（acme.sh 模块）需要**DNS 服务商 API 凭据**（阿里云 AccessKey / Cloudflare Token 等）；Cloudflare Tunnel 需要**隧道凭据**。没有凭据时这些功能显示 BLOCKED，**不是故障，是引擎诚实地不瞎试**。
+- **操作**：拿到凭据后：面板「设置」→ 填入 DNS 凭据 → 网络配置选择 domain 或 cloudflare_tunnel 模式 → 按向导填入域名与凭据 → 由引擎完成签发/隧道接入。
+- **你会看到**：凭据就位后，acme.sh 会把真实证书落到 nginx 的 ssl 目录（替代自签证书），浏览器不再有安全警告。
+- **截图**：![Cloudflare Tunnel 服务卡片](../images/tunnel-services-card.png)
+- **排错**：
 
-**Q2：为什么有的服务免端口、有的带端口？**
-取决于服务的路由方式：Tunnel 中转免端口，域名反代带 HTTPS 端口（默认 8443）。「Tunnel 中转服务」卡片的「访问地址」列会自动给出正确格式。
-
-**Q3：修改主域名后服务无法访问？**
-修改主域名**不会**自动更新已有配置（防误操作设计）。需手动：Tunnel 已发布路由先取消再重新发布；域名反代点「重新生成 Nginx 配置」并重新同步 DNS；SSL 证书由 ACME 对新域名重新签发。
-
-**Q4：Token 报无效或 Invalid request headers？**
-八成混淆了两种 Token：API Token（`cfut_` 或 40 位十六进制，调 API 用）与 Tunnel Token（`eyJ` 开头，cloudflared 运行时凭证）。到 Cloudflare Dashboard 重建 API Token（`cfut_` 类）填入网络配置。
-
-**Q5：SSL 证书申请失败？**
-按序排查：DNS 凭证有 DNS 写入权限（阿里云需 `AliyunDNSFullAccess`）→ 域名已完成解析 → 填的是 API Token 而非 Tunnel Token → Let's Encrypt 每周每域名限 5 次，失败等 24 小时 → 「服务管理 → ACME → 日志」看详细错误。
-
-**Q6：Tunnel 服务外网无法访问？**
-按序：域名 DNS 是否托管在 Cloudflare → `docker ps | grep tunnel` 容器是否运行 → `docker logs easyserver-cloudflare-tunnel --tail=30` → `dig @8.8.8.8 子域名.域名 CNAME +short` 确认解析。
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| acme/cloudflare 安装后功能验证 BLOCKED | 凭据为空（实测口径） | 配置凭据后重试；无凭据时仅生命周期可测属预期 |
+| 自签证书日志出现 `ssl_stapling ignored` 警告 | 自签证书无签发者（OCSP staple 不适用） | **预期噪音，可忽略**（实测确认非致命） |
 
 ---
 
-*上游完整文档：`docs/network-config.md`（五种方式详解、附录 A 凭据创建、附录 B 证书与端口、附录 C 术语表）。本文档行为差异部分以 QA 实测报告 R01/R02 为依据。*
+## 第 6 步：反代排错实战（六条实测经验，全踩过的坑）
+
+### 6.1 反代端口是怎么决定的（理解它，一半的排错消失）
+
+引擎生成 sites.conf 时，每个模块的后端端口按**运行时优先**解析（F5 机制）：
+
+1. 先读模块端口记录（安装时你填的端口，如 notediscovery 的 18000）；
+2. 读不到 → 回退模块定义里的静态默认端口（如 8000）；
+3. 面板自身的反代端口则三级回退：`PANEL_PORT` 环境变量 → 引擎配置 `panel_port` → 默认 8900。
+
+**已知坑（缺陷 AD）**：第 1 级的端口记录存在引擎容器内的易失文件里，**引擎容器重建/升级后会丢**，此时全部回退到静态默认端口 → 你用自定义端口装的模块会 502（或在 mirrored 环境连到同端口的无关服务）。**排查法（实测）**：
+
+```bash
+# 对比三处：端口记录 vs 生成配置 vs 实际映射
+sg docker -c "docker exec easyserver-core cat /app/.env | grep PORT"
+sg docker -c "docker exec easyserver-nginx grep -E 'server_name|proxy_pass' /etc/nginx/conf.d/sites.conf"
+sg docker -c "docker ps --format '{{.Names}}\t{{.Ports}}'"
+```
+
+对不上就重装对应模块（让安装流程重新写入端口记录）再 generate。
+
+### 6.2 HTTP 端口 80 被占：改 http_port 的正确姿势（缺陷 AG）
+
+`http_port` 目前**没有面板/API 修改入口**（配置接口只开放 https_port/domain 等字段）。80 被占（Windows 常见）时：
+
+```bash
+# 1) 编辑引擎配置卷内的 config.yaml，加 http_port（panel_port 同理按需加）
+sudo vi /var/lib/docker/volumes/easyserver_easyserver-app-data/_data/config.yaml
+#    追加两行：http_port: 8080   （面板端口非默认时再加 panel_port: 8901）
+
+# 2) 重新生成反代配置并重启 nginx
+TOKEN=$(curl -s -X POST http://localhost:8901/api/config/auth/login \
+  -H 'Content-Type: application/json' -d '{"password":"<你的管理密码>"}' | sed 's/.*"token":"\([^"]*\)".*/\1/')
+curl -s -X POST http://localhost:8901/api/nginx/config/generate -H "Authorization: Bearer $TOKEN"
+sg docker -c "docker restart easyserver-nginx"
+```
+
+实测结果：生成配置从 `listen 80` 全部变为 `listen 8080`，nginx 稳定运行于 8080/8443。
+
+### 6.3 反代"通"了但页面不对——mirrored 假阳性陷阱（重点！）
+
+WSL2 mirrored 模式下，Windows 侧监听的端口会"顶替"应答。实测踩坑：反代 status/媒体域名返回 302，看似成功，实际连到的是 **Windows 侧无关服务**的 dashboard。**排查铁律**：
+
+```bash
+# 怀疑后端不对时，先绕过 nginx 直接看真实后端是谁
+curl -s http://127.0.0.1:<端口> | head -5
+```
+
+返回内容与预期应用对不上（比如出现 "Redirecting to /dashboard"）→ 后端被 Windows 占用/干扰，给模块换端口重装。
+
+### 6.4 joplin 域名访问报 "Invalid origin"（三步变通，实测全通）
+
+joplin 3.x 强校验访问来源，默认配置未暴露域名键。变通三步（实测后 `/api/ping` 返回 200）：
+
+```bash
+# ① 给模块 compose 注入访问域名（端口换成你的 joplin 实际端口）
+echo 'JOPLIN_BASE_URL=https://joplin.test.local:8443' | sudo tee -a /easyserver_data/.env
+# ② 重建 joplin 容器使环境变量生效（在 core 容器内执行 compose）
+sg docker -c "docker exec easyserver-core sh -c 'cd /easyserver_data/modules/joplin && docker compose --env-file /easyserver_data/.env up -d --force-recreate joplin-app'"
+# ③ 让 nginx 反代保留原始 Host 头（含端口）：把 sites.conf 中 joplin 块的
+#    proxy_set_header Host $host;  改为  proxy_set_header Host $http_host;
+sg docker -c "docker exec easyserver-nginx nginx -s reload"
+curl -sk https://joplin.test.local:8443/api/ping    # → {"status":"ok",...}
+```
+
+> 第 ② 步务必带上模块端口变量（如 `JOPLIN_APP_PORT=22301`），漏掉会导致容器回退默认端口、被占用后启动失败（实测踩过）。
+
+### 6.5 nextcloud 域名访问报 "Trusted domain error"
+
+nextcloud 只信任初始化时登记的域名（**TRUSTED_DOMAINS 仅首次安装时生效**，之后改配置不回读）。用 occ 追加新域名：
+
+```bash
+sg docker -c "docker exec -u www-data easyserver-nextcloud php occ config:system:set trusted_domains 3 --value=cloud.test.local"
+```
+
+实测：加域名前访问返回 400 Trusted domain error（这也反证反代链路已通）；加域名后 `/status.php` 与 `/login` 均 200。
+
+### 6.6 未知域名 HTTPS 有漏网之鱼（缺陷 AE，知悉即可）
+
+HTTP 侧未知域名会被 444 兜底关闭；**HTTPS 侧暂无兜底**，未知 SNI 会落入第一个 server 块（面板）返回 200。不影响正常使用，但在安全敏感场景请注意该行为。
+
+---
+
+## 验证清单
+
+- [ ] 能说清四种访问模式的区别，并知道自己在用哪种
+- [ ] `curl http://127.0.0.1:8901/api/health` 返回 ok（本机链路）
+- [ ] nginx 模块安装成功且稳定运行（非 Restarting）
+- [ ] `https://panel.test.local:8443/` 浏览器可访问（自签警告可继续）
+- [ ] HTTP 未知域名连接被关闭（444 兜底生效）
+- [ ] 三处端口比对（/app/.env、sites.conf、docker ps）一致
+- [ ] 知道 80 被占改 http_port 的文件路径与 regenerate 命令
+
+## 完成后你可以……
+
+- **换真域名上 HTTPS**：配置 DNS 凭据后走 ACME 签发（第 5 步），浏览器警告消失。
+- **回去完善安装与日常运维**：见[安装指南](INSTALL_GUIDE.md)第 7 步。
+- **逐模块深挖**：`docs/guides/modules/` 下 13 个模块教程（joplin/nextcloud 的域名特殊项已在本篇 6.4/6.5）。
