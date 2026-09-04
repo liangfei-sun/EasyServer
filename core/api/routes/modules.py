@@ -78,14 +78,21 @@ def _fill_auto_generate_config(metadata: dict, config: dict):
             config[key] = ConfigManager.generate_password()
 
 
-async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager, ml: ModuleLoader):
-    """后台执行安装：拉取镜像 → 启动容器；失败回滚已安装标记"""
+async def _run_install_task(module_id: str, config: dict, cm: ConfigManager, dm: DockerManager, ml: ModuleLoader):
+    """后台执行安装：预创建配置 → 拉取镜像 → 启动容器 → 健康门控；失败回滚已安装标记"""
     task = _INSTALL_TASKS.get(module_id)
     if not task:
         return
     try:
-        # 阶段 1：拉取镜像（大镜像耗时长，失败多为网络/镜像问题）
+        # 阶段 0：预创建单文件挂载（F4）——Docker 对不存在的 bind 源只会创建目录，
+        # 期望单文件的挂载（如 notediscovery config.yaml）会变成目录陷阱
         task["status"] = TASK_RUNNING
+        task["stage"] = "prepare"
+        prepared = await dm.prepare_single_file_mounts(module_id, config)
+        for action in prepared:
+            task["log"].append(action)
+
+        # 阶段 1：拉取镜像（大镜像耗时长，失败多为网络/镜像问题）
         task["stage"] = "pull"
         task["log"].append("正在拉取镜像，大镜像可能需要几分钟...")
         rc, stdout, stderr = await dm.async_pull_module(module_id)
@@ -256,7 +263,7 @@ async def install_module(request: InstallRequest):
         "created_at": time.time(),
         "finished_at": None,
     }
-    asyncio.create_task(_run_install_task(module_id, cm, dm, ml))
+    asyncio.create_task(_run_install_task(module_id, config, cm, dm, ml))
 
     return {
         "success": True,

@@ -452,6 +452,158 @@ class DockerManager:
         result.sort(key=lambda x: len(x.parts), reverse=True)
         return result
 
+    # 配置类文件扩展名：bind 挂载源路径带此类后缀视为单文件挂载（F4）
+    _CONFIG_FILE_SUFFIXES = {".yaml", ".yml", ".json", ".env", ".conf", ".ini", ".toml", ".xml", ".properties"}
+
+    def _expand_env_value(self, value: str, env: dict) -> str:
+        """展开 compose 值中的 ${VAR:-default} / $VAR 变量（与 resolve_module_data_paths 同规则）"""
+        def repl(m):
+            default = m.group(2) or ""
+            return env.get(m.group(1)) or default
+        value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}", repl, value)
+        value = re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", lambda m: env.get(m.group(1), ""), value)
+        return value
+
+    async def _write_host_file(self, host_path: str, content: str) -> tuple:
+        """经 docker daemon 在宿主侧写入文件（F4）
+
+        core 容器未挂载宿主数据路径（仅挂 docker.sock），无法直接写宿主文件；
+        使用 core 自身镜像起一次性容器执行写入，避免额外镜像依赖。
+        父目录不存在时 bind 挂载会由 daemon 自动创建。
+        返回 (成功, 错误信息)。
+        """
+        parent = str(Path(host_path).parent.as_posix())
+        fname = Path(host_path).name
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "run", "--rm", "-i", "--entrypoint", "sh",
+                "-v", f"{parent}:/mnt",
+                self._core_image(),
+                "-c", f"cat > /mnt/{fname}",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(content.encode()), timeout=120)
+            if proc.returncode != 0:
+                return False, stderr.decode(errors="replace").strip()[:200]
+            return True, ""
+        except (asyncio.TimeoutError, OSError) as e:
+            return False, str(e)[:200]
+
+    def _core_image(self) -> str:
+        """获取 core 自身镜像名（用于经 daemon 执行宿主侧写文件）"""
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "easyserver-core", "--format", "{{.Config.Image}}"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return "busybox:latest"
+
+    def _build_render_context(self, module_id: str, config: dict) -> dict:
+        """构建模块模板渲染上下文（F4）
+
+        同时提供：原始键、小写键、剥离模块前缀的小写键（如
+        NOTEDISCOVERY_PASSWORD → password），覆盖常见模板命名习惯；
+        auth_enabled 为布尔约定：存在非空 password 即启用认证。
+        """
+        ctx = {}
+        prefix = module_id.replace("-", "_").upper() + "_"
+        for k, v in config.items():
+            ctx[k] = v
+            ctx[k.lower()] = v
+            if k.upper().startswith(prefix):
+                ctx[k[len(prefix):].lower()] = v
+        ctx.setdefault("auth_enabled", bool(ctx.get("password")))
+        return ctx
+
+    async def prepare_single_file_mounts(self, module_id: str, config: dict) -> list:
+        """安装前预创建 compose 单文件 bind 挂载的宿主文件（F4）
+
+        Docker 对不存在的 bind 源只会自动创建目录——期望单文件的挂载会变成
+        同名目录陷阱（容器活着但配置永远写不进）。本方法在安装前：
+        - 解析 compose volumes 中宿主源路径不存在且带配置类扩展名的挂载；
+        - 模块 templates/<文件名>.j2 存在 → 用安装配置渲染生成；
+        - 无模板 → 创建空文件并记录警告（部分应用空配置仍会崩溃，需模块指南说明）。
+        宿主已存在的路径一律跳过（不覆盖用户数据）。
+        返回动作描述列表（供安装日志展示）。
+        """
+        compose_file = self.modules_dir / module_id / "docker-compose.yml"
+        if not compose_file.exists():
+            return []
+        try:
+            with open(compose_file, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f) or {}
+        except Exception:
+            return []
+        env = self._load_env_dict()
+        env.update(self._get_host_env_overrides())  # daemon 视角宿主路径覆盖优先
+
+        actions = []
+        for svc in (compose.get("services") or {}).values():
+            volumes = []
+            if isinstance(svc, dict):
+                volumes = svc.get("volumes") or []
+            if isinstance(volumes, dict):
+                volumes = list(volumes.values())
+            for vol in volumes:
+                source = ""
+                if isinstance(vol, dict):
+                    source = vol.get("source", "") or vol.get("src", "")
+                elif isinstance(vol, str):
+                    # 提取宿主段（跳过 ${...} 块，其内部可能含冒号；同 _split_host_source 规则）
+                    i, depth = 0, 0
+                    while i < len(vol):
+                        ch = vol[i]
+                        if ch == "$" and i + 1 < len(vol) and vol[i + 1] == "{":
+                            depth = 1
+                            i += 2  # 一起消费 ${
+                            continue
+                        if depth:
+                            if ch == "{":
+                                depth += 1
+                            elif ch == "}":
+                                depth -= 1
+                            i += 1
+                            continue
+                        if ch == ":":
+                            break
+                        i += 1
+                    source = vol[:i]
+                if not source:
+                    continue
+                host_path = self._expand_env_value(source, env).strip()
+                if not host_path:
+                    continue
+                p = Path(host_path)
+                if p.exists() or p.suffix.lower() not in self._CONFIG_FILE_SUFFIXES:
+                    continue
+
+                template = self.modules_dir / module_id / "templates" / f"{p.name}.j2"
+                if template.exists():
+                    try:
+                        from jinja2 import Environment, FileSystemLoader
+                        jenv = Environment(loader=FileSystemLoader(str(template.parent)))
+                        ctx = self._build_render_context(module_id, config)
+                        content = jenv.get_template(template.name).render(**ctx)
+                        how = f"模板渲染 {template.name}"
+                    except Exception as e:
+                        actions.append(f"警告：模板 {template.name} 渲染失败（{e}），将创建空文件")
+                        content, how = "", "空文件"
+                else:
+                    content = ""
+                    how = "空文件（模块未提供模板，若应用要求合法配置请参考模块指南）"
+                ok, err = await self._write_host_file(host_path, content)
+                if ok:
+                    actions.append(f"预创建配置文件 {host_path}（{how}）")
+                else:
+                    actions.append(f"警告：预创建 {host_path} 失败: {err}")
+        return actions
+
     async def async_get_module_status(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "ps", "-a", "--format", "json", check=False)
         containers = []
