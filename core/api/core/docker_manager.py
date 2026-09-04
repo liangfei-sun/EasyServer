@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -159,23 +160,20 @@ class DockerManager:
         return result
 
     async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120, prefer_env_file: bool = False) -> tuple:
-        """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)"""
+        """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)
+
+        C8②：超时统一走 _run_cmd_with_timeout（terminate→10s→kill），
+        消除 build/pull 等路径超时遗留的孤儿 compose 进程。
+        """
         cmd = self._build_compose_cmd(module_id, *args)
         # C2：剔除与 env-file 同键的进程占位变量仅在安装流程启用（默认进程 env 优先）
         env = self._compose_process_env(prefer_env_file)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self.modules_dir / module_id),
-            env=env
+        rc, stdout, stderr = await self._run_cmd_with_timeout(
+            cmd, timeout, cwd=str(self.modules_dir / module_id), env=env
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        stdout_str = stdout.decode()
-        stderr_str = stderr.decode()
-        if check and proc.returncode != 0:
-            raise RuntimeError(f"Docker compose 命令失败: {stderr_str}")
-        return proc.returncode, stdout_str, stderr_str
+        if check and rc != 0:
+            raise RuntimeError(f"Docker compose 命令失败: {stderr}")
+        return rc, stdout, stderr
 
     def start_module(self, module_id: str) -> dict:
         result = self._run_compose(module_id, "up", "-d")
@@ -253,7 +251,8 @@ class DockerManager:
                 return 0, "[local-build] compose 含 build 段，已改为本地构建镜像", stderr
             return rc, stdout, stderr
         images = await self.get_module_images(module_id, prefer_env_file=prefer_env_file)
-        if images and all(self.has_local_image(img) for img in images):
+        # C6：has_local_image 已改 async，列表推导内 await（事件循环不被同步 inspect 阻塞）
+        if images and all([await self.has_local_image(img) for img in images]):
             logger.info(f"Module {module_id} images all present locally: {images}")
             return 0, f"[local-hit] 镜像本地已存在，跳过拉取: {', '.join(images)}", ""
 
@@ -270,11 +269,11 @@ class DockerManager:
                     # 尝试拉 repo:latest 并回打原 tag（Z：compose pull 已成功的镜像已在本地，
                     # 不纳入降级候选，避免多镜像 compose 把成功项一并作废）
                     images = await self.get_module_images(module_id, prefer_env_file=prefer_env_file)
-                    candidates = [img for img in images if "@" not in img and not self.has_local_image(img)]
+                    candidates = [img for img in images if "@" not in img and not await self.has_local_image(img)]
                     degraded = await self._fallback_pull_latest(candidates) if candidates else []
                     # Z：成功判据结果导向——compose 所需镜像全部本地可用即成功，
                     # 个别 latest 拉取失败不整体作废；仍缺镜像则维持原失败
-                    missing = [img for img in images if not self.has_local_image(img)]
+                    missing = [img for img in images if not await self.has_local_image(img)]
                     if images and not missing:
                         detail = "; ".join(degraded) if degraded else "（所需镜像已在本地，无需降级）"
                         logger.info(f"Latest-tag fallback for {module_id}: {detail}")
@@ -288,16 +287,18 @@ class DockerManager:
         return rc, stdout, stderr
 
     @staticmethod
-    async def _run_cmd_with_timeout(cmd: list, timeout: int) -> tuple:
+    async def _run_cmd_with_timeout(cmd: list, timeout: int, cwd: str = None, env: dict = None) -> tuple:
         """Z：执行命令并在超时时终止子进程
 
         asyncio.wait_for 超时仅取消等待、不终止子进程，会遗留孤儿 docker pull
         长时间占用资源；此处超时后 terminate → 等待 10s → 仍不退则 kill。
+        C8②：_async_run_compose 统一复用本方法（cwd/env 由调用方传入），
+        build/pull 等所有 compose 路径超时同样孤儿消除（原先仅 fallback pull 有）。
         返回 (returncode, stdout, stderr)；超时或无法创建进程时 rc=-1。
         """
         try:
             proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd, env=env
             )
         except OSError as e:
             return -1, "", f"failed to spawn {' '.join(cmd)}: {e}"
@@ -347,10 +348,15 @@ class DockerManager:
             return []
         return [line.strip() for line in stdout.strip().split("\n") if line.strip()]
 
-    def has_local_image(self, image: str) -> bool:
-        """检查镜像是否已存在于本地（docker image inspect）"""
+    async def has_local_image(self, image: str) -> bool:
+        """检查镜像是否已存在于本地（docker image inspect）
+
+        C6：原为同步 subprocess.run，被 async 协程（async_pull_module 的
+        多镜像循环）调用时阻塞事件循环；改为线程池执行，调用点同步改 await。
+        """
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["docker", "image", "inspect", image],
                 capture_output=True, text=True, timeout=15
             )
@@ -526,16 +532,23 @@ class DockerManager:
         core 容器未挂载宿主数据路径（仅挂 docker.sock），无法直接写宿主文件；
         使用 core 自身镜像起一次性容器执行写入，避免额外镜像依赖。
         父目录不存在时 bind 挂载会由 daemon 自动创建。
+        C5：host_path 仅允许运行时数据根之下（宿主视角，防经 compose 模板
+        指向任意宿主路径的写入）；文件名经 shlex.quote，防含 shell 元字符
+        的文件名注入容器 sh -c。
         返回 (成功, 错误信息)。
         """
+        # C5：路径边界校验（与 prepare_data_dirs 同一套根，含 '/' 边界过滤）
+        roots = self._runtime_data_roots()
+        if not any(host_path.startswith(r + "/") for r in roots):
+            return False, f"拒绝写入：{host_path} 不在运行时数据根之下"
         parent = str(Path(host_path).parent.as_posix())
         fname = Path(host_path).name
         try:
             proc = await asyncio.create_subprocess_exec(
                 "docker", "run", "--rm", "-i", "--entrypoint", "sh",
                 "-v", f"{parent}:/mnt",
-                self._core_image(),
-                "-c", f"cat > /mnt/{fname}",
+                await self._core_image(),
+                "-c", f"cat > /mnt/{shlex.quote(fname)}",
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -547,10 +560,15 @@ class DockerManager:
         except (asyncio.TimeoutError, OSError) as e:
             return False, str(e)[:200]
 
-    def _core_image(self) -> str:
-        """获取 core 自身镜像名（用于经 daemon 执行宿主侧写文件）"""
+    async def _core_image(self) -> str:
+        """获取 core 自身镜像名（用于经 daemon 执行宿主侧写文件）
+
+        C6：原为同步 subprocess.run（调用方 _write_host_file 为 async），
+        阻塞事件循环；改为线程池执行。
+        """
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["docker", "inspect", "easyserver-core", "--format", "{{.Config.Image}}"],
                 capture_output=True, text=True, timeout=15
             )
@@ -803,8 +821,11 @@ class DockerManager:
         last_reason = f"健康探测超时（{timeout}s）"
 
         while loop.time() < deadline:
+            # C8③：ps -a 让崩溃退出的容器可见——无 -a 时 exited 容器从列表消失，
+            # 多服务模块单服务崩溃会误判"全部健康"（理论假成功）；
+            # 下方逐容器状态校验对非 running 直接判败
             rc, stdout, stderr = await self._async_run_compose(
-                module_id, "ps", "--format", "json", check=False
+                module_id, "ps", "-a", "--format", "json", check=False
             )
             containers = _parse_compose_ps_containers(stdout) if rc == 0 else []
             if not containers:
