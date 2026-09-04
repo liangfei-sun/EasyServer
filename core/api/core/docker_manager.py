@@ -96,21 +96,29 @@ class DockerManager:
             pass
         return keys
 
-    def _compose_process_env(self) -> dict:
-        """构建 compose 子进程环境变量（AA）
+    def _compose_process_env(self, prefer_env_file: bool = False) -> dict:
+        """构建 compose 子进程环境变量（AA，C2 收敛作用域）
 
         docker compose 变量解析中进程 env 优先于 --env-file；core 容器经
         docker-compose.yml 的 env_file: .env 预置的模块占位键（如
         NEXTCLOUD_PORT=8888、NEXTCLOUD_ADMIN_PASSWORD=change_me_nextcloud）
         会压制安装时写入 --env-file 的真实 config 值。
-        故剔除与 env-file 同键的进程变量（让 --env-file 即安装 config 生效），
-        随后仍应用宿主路径覆盖（PROJECT_ROOT_HOST/DATA_DIR_HOST 不受影响）。
+
+        C2：剔除逻辑仅在模块安装流程启用（prefer_env_file=True，_run_install_task
+        的 prepare/pull/up 路径）——占位值会压制新安装的 config；生命周期操作
+        （restart/update/remove/logs/status）保持默认 False = 进程 env 优先
+        （AA 修复前的旧行为）：存量模块（AA 修复前以进程占位值实际初始化/运行，
+        如 joplin-db 以 change_me_joplin_db 初始化）升级后重启/更新必须继续
+        沿用其实际运行值，改用 .env 表单记录值会与既有数据卷凭据失配
+        （joplin-app 以新密码认证旧库静默失败而 restart 误报 success）。
+        宿主路径覆盖（PROJECT_ROOT_HOST/DATA_DIR_HOST）两种模式均生效。
         """
         env = dict(os.environ)
-        env_file = self._get_env_file()
-        if env_file:
-            for key in self._read_env_file_keys(env_file):
-                env.pop(key, None)
+        if prefer_env_file:
+            env_file = self._get_env_file()
+            if env_file:
+                for key in self._read_env_file_keys(env_file):
+                    env.pop(key, None)
         env.update(self._get_host_env_overrides())
         return env
 
@@ -140,21 +148,21 @@ class DockerManager:
         cmd.extend(args)
         return cmd
 
-    def _run_compose(self, module_id: str, *args, check: bool = True) -> subprocess.CompletedProcess:
+    def _run_compose(self, module_id: str, *args, check: bool = True, prefer_env_file: bool = False) -> subprocess.CompletedProcess:
         cmd = self._build_compose_cmd(module_id, *args)
         module_dir = self.modules_dir / module_id
-        # AA：剔除与 env-file 同键的进程占位变量（安装 config 生效）+ 宿主路径覆盖
-        env = self._compose_process_env()
+        # C2：剔除与 env-file 同键的进程占位变量仅在安装流程启用（默认进程 env 优先）
+        env = self._compose_process_env(prefer_env_file)
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(module_dir), timeout=120, env=env)
         if check and result.returncode != 0:
             raise RuntimeError(f"Docker compose 命令失败: {result.stderr}")
         return result
 
-    async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120) -> tuple:
+    async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120, prefer_env_file: bool = False) -> tuple:
         """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)"""
         cmd = self._build_compose_cmd(module_id, *args)
-        # AA：剔除与 env-file 同键的进程占位变量（安装 config 生效）+ 宿主路径覆盖
-        env = self._compose_process_env()
+        # C2：剔除与 env-file 同键的进程占位变量仅在安装流程启用（默认进程 env 优先）
+        env = self._compose_process_env(prefer_env_file)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -217,17 +225,19 @@ class DockerManager:
         result = self._run_compose(module_id, "logs", "--no-color", "--tail", str(lines), check=False)
         return result.stdout + result.stderr
 
-    async def async_start_module(self, module_id: str) -> dict:
+    async def async_start_module(self, module_id: str, prefer_env_file: bool = False) -> dict:
         # 启动可能涉及镜像拉取，超时设为 10 分钟
-        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600)
+        # C2：prefer_env_file 仅安装流程传 True；restart 等生命周期保持进程 env 优先
+        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600, prefer_env_file=prefer_env_file)
         return {"module": module_id, "action": "start", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
 
-    async def async_pull_module(self, module_id: str, max_retries: int = 3) -> tuple:
+    async def async_pull_module(self, module_id: str, max_retries: int = 3, prefer_env_file: bool = False) -> tuple:
         """拉取模块镜像，返回 (returncode, stdout, stderr)
 
         与启动分离：pull 失败说明是镜像/网络问题，可精确定位诊断。
         大镜像拉取耗时长，超时设为 10 分钟。
         网络波动时自动指数退避重试（最多 max_retries 次）。
+        C2：prefer_env_file 仅安装流程传 True（占位值不应压制新安装 config）。
 
         F2：拉取前先做本地短路——
         - compose 含 build 段（如 backup/nextcloud）→ registry 无此镜像，
@@ -238,18 +248,18 @@ class DockerManager:
         if self._compose_has_build(module_id):
             logger.info(f"Module {module_id} compose has build section, building locally instead of pull")
             # 构建含基础镜像拉取与软件包安装，耗时上限独立于 pull 设为 20 分钟
-            rc, stdout, stderr = await self._async_run_compose(module_id, "build", check=False, timeout=1200)
+            rc, stdout, stderr = await self._async_run_compose(module_id, "build", check=False, timeout=1200, prefer_env_file=prefer_env_file)
             if rc == 0:
                 return 0, "[local-build] compose 含 build 段，已改为本地构建镜像", stderr
             return rc, stdout, stderr
-        images = await self.get_module_images(module_id)
+        images = await self.get_module_images(module_id, prefer_env_file=prefer_env_file)
         if images and all(self.has_local_image(img) for img in images):
             logger.info(f"Module {module_id} images all present locally: {images}")
             return 0, f"[local-hit] 镜像本地已存在，跳过拉取: {', '.join(images)}", ""
 
         base_delay = 2
         for attempt in range(max_retries):
-            rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600)
+            rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600, prefer_env_file=prefer_env_file)
             if rc == 0:
                 return rc, stdout, stderr
             # 最后一次尝试：F3 降级兑底（denied/manifest）→ 仍缺镜像则维持原失败
@@ -259,7 +269,7 @@ class DockerManager:
                     # 精确 tag 被拒（denied/manifest unknown）→ 仅对本次拉取后仍缺失的镜像
                     # 尝试拉 repo:latest 并回打原 tag（Z：compose pull 已成功的镜像已在本地，
                     # 不纳入降级候选，避免多镜像 compose 把成功项一并作废）
-                    images = await self.get_module_images(module_id)
+                    images = await self.get_module_images(module_id, prefer_env_file=prefer_env_file)
                     candidates = [img for img in images if "@" not in img and not self.has_local_image(img)]
                     degraded = await self._fallback_pull_latest(candidates) if candidates else []
                     # Z：成功判据结果导向——compose 所需镜像全部本地可用即成功，
@@ -327,10 +337,10 @@ class DockerManager:
             logger.info(f"Image latest-fallback: pulled {repo}:latest and tagged as {image}")
         return degraded
 
-    async def get_module_images(self, module_id: str) -> list:
+    async def get_module_images(self, module_id: str, prefer_env_file: bool = False) -> list:
         """列出模块 compose 引用的镜像（docker compose config --images）"""
         try:
-            rc, stdout, stderr = await self._async_run_compose(module_id, "config", "--images", check=False)
+            rc, stdout, stderr = await self._async_run_compose(module_id, "config", "--images", check=False, prefer_env_file=prefer_env_file)
         except Exception:
             return []
         if rc != 0:
@@ -698,7 +708,8 @@ class DockerManager:
         """
         actions = []
         try:
-            rc, stdout, stderr = await self._async_run_compose(module_id, "config", check=False)
+            # C2：prepare 仅在安装流程调用，剔除占位键让新安装 config 参与渲染
+            rc, stdout, stderr = await self._async_run_compose(module_id, "config", check=False, prefer_env_file=True)
         except Exception as e:
             logger.warning(f"Module {module_id} prepare_data_dirs: compose config failed: {e}")
             return actions

@@ -99,7 +99,8 @@ async def _run_install_task(module_id: str, config: dict, cm: ConfigManager, dm:
         # 阶段 1：拉取镜像（大镜像耗时长，失败多为网络/镜像问题）
         task["stage"] = "pull"
         task["log"].append("正在拉取镜像，大镜像可能需要几分钟...")
-        rc, stdout, stderr = await dm.async_pull_module(module_id)
+        # C2：安装流程启用 env-file 优先（剔除进程占位键，让新安装 config 生效）
+        rc, stdout, stderr = await dm.async_pull_module(module_id, prefer_env_file=True)
         if stdout:
             # 显示本地命中/构建等 pull 阶段信息（如 F2 的 [local-hit]/[local-build]）
             task["log"].append(stdout.strip().split("\n")[-1])
@@ -113,7 +114,8 @@ async def _run_install_task(module_id: str, config: dict, cm: ConfigManager, dm:
         # 阶段 2：启动容器
         task["stage"] = "up"
         task["log"].append("镜像就绪，正在启动容器...")
-        result = await dm.async_start_module(module_id)
+        # C2：安装流程启用 env-file 优先；restart 等生命周期保持进程 env 优先（存量兼容）
+        result = await dm.async_start_module(module_id, prefer_env_file=True)
         if not result.get("success"):
             raise _InstallError(
                 f"容器启动失败: {result.get('error', '未知错误')}",
