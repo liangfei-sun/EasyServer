@@ -23,9 +23,16 @@ def regenerate_nginx_config(cm, restart: bool = False) -> bool:
         from .deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_module_loader
 
         ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
+        # BUG-1 fix: 使用 cm.get_installed_modules() 获取实际已安装模块 ID 列表，
+        # 再通过 ml 解析元数据；而非 ml.get_installed_modules()（返回所有有 compose 的模块）
+        installed_ids = cm.get_installed_modules()
         ml = get_module_loader()
-        installed = ml.get_installed_modules()
-        ng.generate_all(cm.load_config(), installed)
+        installed_modules = []
+        for mid in installed_ids:
+            metadata = ml.get_module_by_id(mid)
+            if metadata:
+                installed_modules.append(metadata)
+        ng.generate_all(cm.load_config(), installed_modules)
         if restart:
             ng.restart_nginx()
         else:
@@ -56,9 +63,15 @@ async def async_regenerate_nginx_config(cm, restart: bool = False) -> bool:
         from .deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_module_loader
 
         ng = NginxGenerator(MODULES_DIR, template_dir=MODULES_TEMPLATE_DIR)
+        # BUG-1 fix: 同同步版本，使用 cm 获取已安装模块列表
+        installed_ids = cm.get_installed_modules()
         ml = get_module_loader()
-        installed = ml.get_installed_modules()
-        ng.generate_all(cm.load_config(), installed)
+        installed_modules = []
+        for mid in installed_ids:
+            metadata = ml.get_module_by_id(mid)
+            if metadata:
+                installed_modules.append(metadata)
+        ng.generate_all(cm.load_config(), installed_modules)
         if restart:
             await ng.async_restart_nginx()
         else:
