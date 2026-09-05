@@ -100,22 +100,21 @@ EasyServer 推广物料 · 发布操作清单（本文件为内部操作手册�
 
 ## 4. 配图外链说明（占位符 → 素材 → 图床）
 
-**背景（重要）**：仓库 `.gitignore` 含 `# 截图文件 *.png` 规则，新截图需 `git add -f` 强制入库。2026-09-04 已入库 6 张面板截图（login / panel-home / module-store / network-config / settings / setup-wizard，`docs/images/` 共 9 张跟踪 png），稿件中可用素材已按相对路径 `../../images/<文件名>` 嵌入（稿件位于 `docs/publish/<平台>/` 二级目录，故为两层）；**发布前仍需将图片上传图床并替换为外链**（多数平台不解析仓库相对路径，且需防防盗链 403）。其余无素材占位符（docker-version / build-log / health-check / compose-ps）保留待补截图。
+**背景（重要）**：仓库 `.gitignore` 含 `# 截图文件 *.png` 规则，新截图需 `git add -f` 强制入库。2026-09-04 已入库 6 张面板截图（login / panel-home / module-store / network-config / settings / setup-wizard）；2026-09-05 又入库 6 张模块 UI 截图（kuma-dashboard / calibre-books / jellyfin-library / nextcloud-files / nextcloud-share / joplin-server-home），`docs/images/` 共 **15 张跟踪 png**。稿件中可用素材已按相对路径 `../../images/<文件名>` 嵌入（稿件位于 `docs/publish/<平台>/` 二级目录，故为两层）；**发布前仍需将图片上传图床并替换为外链**（多数平台不解析仓库相对路径，且需防防盗链 403）。其余无素材占位符（docker-version / build-log / health-check / compose-ps）保留待补截图。
 
 **教程打样状态（2026-09-05，Phase T）**：`docs/guides/` 三篇已按「新手用户旅程」风格重写（INSTALL_GUIDE / NETWORK_CONFIG_GUIDE / modules/notediscovery，就地覆盖，旧稿在 git 历史），统一骨架：步骤制（操作 / 你会看到 / 截图 / 排错表）+ 验证清单 + 下一步指引；排错表收编实测缺陷修复前后对照（F1 健康门控 / F2 本地命中 / F3 tag 降级 / F4 单文件预创建 / AA 密码贯通 / AB 目录属主 + R32 反代排错六条）。**评审通过后需同步 4 篇平台稿**（csdn/INSTALL_TUTORIAL、csdn/NETWORK_TUTORIAL、zhihu/ANSWER_DRAFT、juejin/QUICKSTART）。
 
 **评审修复状态（2026-09-05，三视角评审修复轮）**：必修 C1（推荐配置下数据目录属主修正映射到容器内挂载点，修复 AB 在非默认 DATA_DIR 时静默失效）/ C2（占位键剔除仅限安装流程，存量模块重启/更新保持进程 env 优先）/ C3（反代端口对 host 网络模块回退 access.port，修复 F5 回归）与应修 C4–C8（失败清理容器 / 写文件校验 / 事件循环阻塞 / jellyfin 仅回环暴露 / 根路径边界 + 超时统一 + ps -a 健康门控）均已修复并逐项回归实测；文档口径同步（健康检查 30–60 秒 / DATA_DIR 示例差异标注 / host 模块 0.0.0.0 监听补注 / 断链与 workaround 口径更新）。稿件中涉及的数据（安装日志、端口、耗时）与代码行为一致，可按第 2 节自查表发布。
 
-**待补模块 UI 截图（浏览器代理，待用户开浏览器面板后补）**：
+**模块 UI 截图处置结果（2026-09-05，原待补清单清零）**：
 
-| 待补截图 | 目标位置 | 数量 |
-|---|---|---|
-| notediscovery 登录页 | guides/modules/notediscovery.md 第 2 步 | 1 |
-| notediscovery 编辑器（写笔记中） | 同上第 3 步 | 1 |
-| notediscovery 搜索结果（关键词高亮） | 同上第 4 步 | 1 |
-| 安装进度页（prepare→pull→up→health 四阶段日志） | guides/INSTALL_GUIDE.md 第 5 步 + notediscovery.md 第 1 步（现为文字描述位） | 1（两处复用） |
+- **已入库并嵌入（4 张）**：kuma-dashboard（INSTALL_GUIDE 第 6 步「装好后的服务长这样」）、jellyfin-library（同上）、nextcloud-files（NETWORK_CONFIG_GUIDE 4d「访问到真实服务」）、joplin-server-home（modules/joplin.md 4.1）
+- **备用素材（2 张，暂无占位符）**：calibre-books（书目页含样例书）、nextcloud-share（公开分享页）
+- **joplin-notes 原计划截图（Web 建笔记本+写笔记）取消**：Joplin Server 产品无 Web 笔记编辑界面（服务端仅账号/同步管理），改用 joplin-server-home.png + 客户端同步文字步骤（见 modules/joplin.md 4.1/4.2）
+- **notediscovery 3 张（登录页/编辑器/搜索）维持文字描述**：服务在回归用例中已卸载复位，截图位保留文字描述不阻塞发布
+- **安装进度页（四阶段日志）维持文字描述**：INSTALL_GUIDE 第 5 步与 notediscovery.md 第 1 步的文字描述已覆盖形态
 
-截图到位后在三篇教程的「截图」行补相对路径引用（guides/ 用 `../images/`、guides/modules/ 用 `../../images/`）；发布平台稿时仍需上传图床换外链。
+嵌入相对路径规则不变：guides/ 用 `../images/`、guides/modules/ 用 `../../images/`；发布平台稿时仍需上传图床换外链。
 
 **图床选型（任选其一）**：
 - **SM.MS**：免费额度即可用，注册后上传拿 https 直链，适合轻量使用
@@ -137,7 +136,7 @@ EasyServer 推广物料 · 发布操作清单（本文件为内部操作手册�
 | `IMAGE_PLACEHOLDER-module-store` | zhihu/ANSWER_DRAFT | 应用商店模块列表 | `docs/images/module-store.png` | 已嵌入（注：为“基础设施”分类默认视图——5 卡片、13 模块分布 5 分类，UI 无“全部”分类入口） |
 | `IMAGE_PLACEHOLDER-compose-ps` | juejin/QUICKSTART | `docker compose ps` Up (healthy) | 无 | 保留占位符，需图床（待补截图） |
 
-**备用素材（已入库，暂无对应占位符）**：`login.png`（登录页）、`network-config.png`（网络配置页实拍）、`settings.png`（设置页）——后续稿件或配图升级时取用。
+**备用素材（已入库，暂无对应占位符）**：`login.png`（登录页）、`network-config.png`（网络配置页实拍）、`settings.png`（设置页）、`calibre-books.png`（calibre-web 书目页含样例书）、`nextcloud-share.png`（nextcloud 公开分享页）——后续稿件或配图升级时取用。
 
 **zhihu 稿说明**：ANSWER_DRAFT 原设计含 2 处占位图（panel-home / module-store），已按相对路径嵌入；知乎发布时图片由平台上传转存，不依赖仓库路径。
 

@@ -135,6 +135,10 @@ curl -s  -o /dev/null -w '%{http_code}\n' http://whatever.test.local:8080/ # 未
 - **操作**：浏览器打开 `https://panel.test.local:8443/`。
 - **你会看到**：自签证书会有"不安全"警告——点"高级 → 继续访问"即可（自签场景预期行为；换真实域名 + Let's Encrypt 证书后消失）。之后就是熟悉的 EasyServer 登录页。
 - **截图**：![面板登录页](../images/login.png)
+
+面板能过，已装模块的域名同样能过——这才是反代链路的完整意义：域名/端口指向的是真实服务，而非一个空壳。下图是经同一套链路访问到的 nextcloud 文件页（真实服务在反代后面，网关只负责把流量送到）：
+
+![通过反代域名访问到的 nextcloud 文件页](../images/nextcloud-files.png)
 - **排错**：浏览器报证书错误且无法继续 → 确认访问的是 8443 端口、hosts 已生效（`ping panel.test.local` 应为 127.0.0.1）。
 
 ---

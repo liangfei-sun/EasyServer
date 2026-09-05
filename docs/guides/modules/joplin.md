@@ -7,6 +7,8 @@
 
 Joplin Server 是开源笔记 Joplin 的同步服务器，配合 PostgreSQL 数据库实现多设备笔记同步、端到端加密（E2EE）与笔记本共享。本模块为**双容器编排**（app + postgres），是 13 个模块中唯一的多容器模块。
 
+> **产品能力边界（实测确认）**：Joplin Server **没有 Web 笔记编辑界面**——服务端 Web（Home / Applications 页）仅提供账号与同步管理（申请令牌、查看已授权应用等）；笔记本与笔记必须通过 **Joplin 桌面/移动客户端**配置同步后创建。期待在浏览器里写笔记会找不到入口，这不是部署出了问题。
+
 | 项 | 值 |
 |------|------|
 | 镜像 | `joplin/server:3.0.1`（module.yaml 声明；**实测该 tag 不可拉取，latest 可用**）+ `postgres:16` |
@@ -86,6 +88,24 @@ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:22301/login
 sg docker -c "docker compose -f modules/joplin/docker-compose.yml up -d --force-recreate joplin-app"
 ```
 
+### 4.1 Web 界面：注册账号与同步管理（无笔记编辑器）
+
+浏览器打开 `http://127.0.0.1:22301`：首次使用点注册创建账号（注册开关 `SIGNUP_ENABLED` 服务端默认开启）；注册后用邮箱+密码登录，看到的就是全部 Web 能力——首页（下图，管理员已登录）与 Applications 页（管理同步令牌/已授权客户端）。**在这里找不到写笔记的入口属正常**：服务端只管账号与同步，笔记在客户端里（见 4.2）。
+
+![Joplin Server 首页：管理员已登录，含同步配置指引](../../images/joplin-server-home.png)
+
+> 注册后服务端会提示“激活邮件已发送”：本机默认无邮件投递（无 MTA），**Web 使用不受影响**；若客户端同步报账号待激活，先回服务端 Web 登录一次确认账号可用（或由管理员在用户管理里确认），再回客户端重试。
+
+### 4.2 客户端同步配置（笔记在这里建）
+
+在 Joplin 桌面/移动客户端（官网下载）中：工具 → 选项 → 同步，三项填写——
+
+1. **同步目标**：选 Joplin Server（WebDAV 之外的 Joplin Server 项）
+2. **服务器地址**：`http://<服务器IP>:22301`（经域名反代则填 `https://joplin.<你的域名>:8443`，且服务端需保证 origin 校验通过，见 FAQ）
+3. **账号邮箱/密码**：用 4.1 创建的账号（不要把管理员账户填进客户端，至少建一个专用同步账号）；自签/HTTP 场景若客户端报证书错误，勾选**忽略 SSL 验证**选项
+
+点“检查同步配置”→ 成功提示后，客户端里新建笔记本与笔记，同步后多端可见——这也是唯一建笔记的途径。
+
 ## 5. 访问方式
 
 - **直连**：`http://<服务器IP>:<JOPLIN_APP_PORT>`（默认 22300）
@@ -114,8 +134,14 @@ sg docker -c "docker compose -f modules/joplin/docker-compose.yml up -d --force-
 **Q：所有请求报 `Invalid origin`（缺陷 T）？**
 Joplin 3.x 强校验请求 origin 与 `APP_BASE_URL` 一致。换端口或经域名反代访问时，必须设置 `JOPLIN_BASE_URL` 为实际访问地址并重建 app 容器（面板字段表当前缺失该项，需手动注入环境变量）。
 
+**Q：Web 界面怎么找不到写笔记的地方？**
+产品本身没有 Web 笔记编辑界面：服务端只提供账号/同步管理（见 4.1）。装 Joplin 桌面/移动客户端按 4.2 配置同步后，在客户端里建笔记本与笔记。
+
 **Q：客户端同步失败？**
-按序检查：① 服务器地址是否与 `JOPLIN_BASE_URL` 一致（origin 校验）；② 账户密码是否正确（用 Web 界面创建的同步账户，非管理员账户）；③ `docker logs easyserver-joplin-app` 查看错误。
+按序检查：① 服务器地址是否与 `JOPLIN_BASE_URL` 一致（origin 校验）；② 账户密码是否正确（用 Web 界面创建的同步账户，非管理员账户）；③ 账号是否待激活（注册后服务端提示激活邮件已发送，本机无邮件投递时 Web 不受影响，但客户端同步可能被拦，先回服务端确认账号可用）；④ 自签/HTTP 场景勾选客户端“忽略 SSL 验证”；⑤ `docker logs easyserver-joplin-app` 查看错误。
+
+**Q：注册页不可用/注册接口返回 403？**
+检查服务端注册开关：joplin server 默认 `SIGNUP_ENABLED=true`（实测容器 env 已含）；若被显式关为 `false`，在 compose 的 joplin-app environment 段追加 `SIGNUP_ENABLED=true` 后重建容器。
 
 **Q：忘记管理员密码？**
 官方方法（module.yaml 引用）：`docker exec -it easyserver-joplin-app npm --prefix packages/server/tools reset-admin-password`。

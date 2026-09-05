@@ -295,7 +295,15 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18000
 
 然后登录应用：浏览器打开 `http://127.0.0.1:18000`，用**你在面板安装时填的密码**登录（修复前这里有个大坑：面板填的密码不生效，实际生效的是内部占位值 `change_me_notes`，已修复）。登录后你会看到 NoteDiscovery 的登录页与主页。
 
-> 顺带提醒其他模块的"第一次"：uptime-kuma 是 v2 两段式向导（先选数据库，再建管理员）；calibre-web 默认账号 `admin/admin123`、配库成功后页面不跳转（看绿色提示条）；jellyfin 媒体库会忽略文件名含 `sample` 的视频。
+> 顺带提醒其他模块的“第一次”：uptime-kuma 是 v2 两段式向导（先选数据库，再建管理员）；calibre-web 默认账号 `admin/admin123`、配库成功后页面不跳转（看绿色提示条）；jellyfin 媒体库会忽略文件名含 `sample` 的视频。
+
+装好后的服务长这样（两张实测截图）：uptime-kuma 的仪表盘（监控项 + 心跳条，加一个监控项就有绿/红心跳记录）——
+
+![uptime-kuma 仪表盘：监控项与心跳](../images/kuma-dashboard.png)
+
+jellyfin 的媒体库（Movies 库已扫入两部影片，海报墙即首页）——
+
+![jellyfin 媒体库：Movies 库海报墙](../images/jellyfin-library.png)
 
 ---
 
