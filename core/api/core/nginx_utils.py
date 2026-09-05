@@ -4,8 +4,46 @@ EasyServer Nginx 配置工具
 """
 import asyncio
 import logging
+import os
+import subprocess
 
 logger = logging.getLogger("easyserver.nginx_utils")
+
+
+def ensure_self_signed_cert(modules_dir: str, domain: str) -> bool:
+    """BUG-2 fix: 确保 SSL 证书存在，不存在则生成自签名证书。
+
+    nginx sites.conf.j2 硬编码引用 /etc/nginx/ssl/{domain}/fullchain.cer
+    和 {domain}.key，首次安装时证书不存在导致 nginx 崩溃（鸡生蛋问题）。
+
+    Returns:
+        True 表示证书已存在或成功生成，False 表示生成失败
+    """
+    if not domain:
+        return False
+    ssl_dir = os.path.join(modules_dir, "nginx", "ssl", domain)
+    cert_file = os.path.join(ssl_dir, "fullchain.cer")
+    key_file = os.path.join(ssl_dir, f"{domain}.key")
+    if os.path.isfile(cert_file) and os.path.isfile(key_file):
+        return True
+    os.makedirs(ssl_dir, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-nodes", "-days", "365",
+                "-newkey", "rsa:2048",
+                "-keyout", key_file,
+                "-out", cert_file,
+                "-subj", f"/CN={domain}",
+                "-addext", f"subjectAltName=DNS:*.{domain}",
+            ],
+            capture_output=True, check=True, timeout=30,
+        )
+        logger.info("已为域名 %s 生成自签名 SSL 证书", domain)
+        return True
+    except Exception as e:
+        logger.warning("自签名证书生成失败 (%s): %s", domain, e)
+        return False
 
 
 def regenerate_nginx_config(cm, restart: bool = False) -> bool:
