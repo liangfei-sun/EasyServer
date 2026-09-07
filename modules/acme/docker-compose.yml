@@ -3,7 +3,7 @@
 
 services:
   acme.sh:
-    image: neilpang/acme.sh:v3.0.9
+    image: neilpang/acme.sh:latest
     container_name: easyserver-acme
     command: daemon
     volumes:
