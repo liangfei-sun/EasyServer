@@ -51,7 +51,7 @@ docker compose up -d
 
 | 模块 | 分类 | 端口 | 说明 |
 |---|---|---|---|
-| nginx | 基础设施 | 80/443 | 反向代理 + SSL |
+| nginx | 基础设施 | 8080/8443 | 反向代理 + SSL（HTTP 监听 `http_port`，缺省 80；域名反代实践用 8080/8443，规避运营商对 80/443 的封锁） |
 | notediscovery | 笔记 | 8000 | 笔记发现服务 |
 | calibre-web | 文件 | 8083 | 电子书管理 |
 | filebrowser | 文件 | 8081 | 网页文件浏览器 |
@@ -125,9 +125,23 @@ docker exec easyserver-core bash /app/scripts/manage.sh svc nginx restart  # 操
 详见 [网络配置指南](docs/network-config.md)。
 
 ### 域名反代模式
-所有服务通过 Nginx 反向代理访问，自动配置 SSL 证书。
-- `https://notes.example.com` → Joplin
-- `https://media.example.com` → Jellyfin
+所有服务通过 Nginx 反向代理访问，SSL 证书自动处理（启动前自动生成自签名证书，可换 Let's Encrypt 或导入正式证书）：
+
+| 子域名 | 模块 |
+|---|---|
+| `panel.<域名>` | 管理面板 |
+| `notes.<域名>` | notediscovery |
+| `files.<域名>` | filebrowser |
+| `joplin.<域名>` | joplin |
+| `cloud.<域名>` | nextcloud |
+| `media.<域名>` | jellyfin |
+| `books.<域名>` | calibre-web |
+| `status.<域名>` | uptime-kuma |
+| `frigate.<域名>` | frigate |
+
+仅已安装模块生成路由，安装/卸载时自动更新。完整映射表（含默认端口）与 DNS/证书配置见[网络配置指南](docs/guides/NETWORK_CONFIG_GUIDE.md)。
+
+反代模板内置 **WebSocket 支持**（`Upgrade`/`Connection` 升级头，uptime-kuma 实时通知、nextcloud 推送等场景开箱即用）与 **300s 代理超时**（大文件上传/长连接不被截断）。
 
 ### IPv6 直连模式
 服务端口直接暴露在公网，适合无域名的场景。

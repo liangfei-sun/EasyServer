@@ -7,9 +7,10 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 
-from ..core.deps import get_config_manager, get_docker_manager
+from ..core.deps import get_config_manager, get_docker_manager, MODULES_DIR
 from ..core.background_tasks import trigger_dns_sync_background
-from ..core.nginx_utils import async_regenerate_nginx_config
+from ..core.nginx_utils import async_regenerate_nginx_config, ensure_self_signed_cert
+from pathlib import Path
 from .config import _save_dns_credentials
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -50,6 +51,15 @@ async def configure_network(request: NetworkConfigRequest):
 
     if request.access_mode == "domain":
         # 域名反代：启动 nginx+acme+ddns-go，停止 cloudflare-tunnel
+        # BUG-2 fix: nginx 启动前确保 SSL 证书存在（自签名或已有）
+        domain = cm.get_config_value("domain", "")
+        if domain:
+            ensure_self_signed_cert(MODULES_DIR, domain)
+        # BUG-4 fix: ACME 启动前确保 dns-credentials.env 存在（可为空文件）
+        acme_env = Path(MODULES_DIR) / "acme" / "dns-credentials.env"
+        acme_env.parent.mkdir(parents=True, exist_ok=True)
+        if not acme_env.is_file():
+            acme_env.touch()
         for mid in ["nginx", "acme", "ddns-go"]:
             if mid not in cm.get_installed_modules():
                 cm.add_installed_module(mid)
@@ -75,6 +85,15 @@ async def configure_network(request: NetworkConfigRequest):
 
     elif request.access_mode == "hybrid":
         # 混合模式：域名反代（Nginx+ACME+DDNS）与 Cloudflare Tunnel 同时启用
+        # BUG-2 fix: nginx 启动前确保 SSL 证书存在
+        domain = cm.get_config_value("domain", "")
+        if domain:
+            ensure_self_signed_cert(MODULES_DIR, domain)
+        # BUG-4 fix: ACME 启动前确保 dns-credentials.env 存在
+        acme_env = Path(MODULES_DIR) / "acme" / "dns-credentials.env"
+        acme_env.parent.mkdir(parents=True, exist_ok=True)
+        if not acme_env.is_file():
+            acme_env.touch()
         for mid in ["nginx", "acme", "ddns-go"]:
             if mid not in cm.get_installed_modules():
                 cm.add_installed_module(mid)

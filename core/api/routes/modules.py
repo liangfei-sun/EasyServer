@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/modules", tags=["modules"])
 # key = module_id，同一模块同一时间只允许一个安装任务（防重复安装）
 # 任务结构：{module_id, status, stage, error, log, created_at, finished_at}
 # status: pending / running / success / failed
-# stage: pull / up（后台执行阶段）
+# stage: prepare / pull / up / health（后台执行阶段）
 # ---------------------------------------------------------------------------
 _INSTALL_TASKS = {}
 _TASK_MAX_RETENTION = 50  # 完成任务最多保留条数
@@ -78,17 +78,50 @@ def _fill_auto_generate_config(metadata: dict, config: dict):
             config[key] = ConfigManager.generate_password()
 
 
-async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager, ml: ModuleLoader):
-    """后台执行安装：拉取镜像 → 启动容器；失败回滚已安装标记"""
+async def _remove_started_containers(dm: DockerManager, module_id: str, task: dict):
+    """C4：安装失败时清理已启动的容器（compose down，保留镜像）
+
+    否则面板显示未安装但容器仍在运行/占用端口，形成"面板未安装+容器占端口"
+    的幽灵态，下轮安装报端口冲突。清理失败仅告警，不掩盖原始失败原因。
+    """
+    try:
+        result = await dm.async_stop_module(module_id)
+        if result.get("success"):
+            task["log"].append("已清理安装期间启动的容器（保留镜像，便于修复后重装）")
+        else:
+            task["log"].append(f"警告：清理已启动容器失败: {str(result.get('error') or '')[:200]}")
+    except Exception as e:
+        task["log"].append(f"警告：清理已启动容器失败: {e}")
+
+
+async def _run_install_task(module_id: str, config: dict, cm: ConfigManager, dm: DockerManager, ml: ModuleLoader):
+    """后台执行安装：预创建配置 → 拉取镜像 → 启动容器 → 健康门控；
+    失败回滚已安装标记（C4：up 已尝试后还会清理已启动容器，保留镜像）"""
     task = _INSTALL_TASKS.get(module_id)
     if not task:
         return
+    containers_started = False
     try:
-        # 阶段 1：拉取镜像（大镜像耗时长，失败多为网络/镜像问题）
+        # 阶段 0：预创建单文件挂载（F4）——Docker 对不存在的 bind 源只会创建目录，
+        # 期望单文件的挂载（如 notediscovery config.yaml）会变成目录陷阱
         task["status"] = TASK_RUNNING
+        task["stage"] = "prepare"
+        prepared = await dm.prepare_single_file_mounts(module_id, config)
+        for action in prepared:
+            task["log"].append(action)
+        # AB：预创建数据目录并修正属主（root 属主目录会导致 uid1000 应用写入 403）
+        data_prepared = await dm.prepare_data_dirs(module_id)
+        for action in data_prepared:
+            task["log"].append(action)
+
+        # 阶段 1：拉取镜像（大镜像耗时长，失败多为网络/镜像问题）
         task["stage"] = "pull"
         task["log"].append("正在拉取镜像，大镜像可能需要几分钟...")
-        rc, _stdout, stderr = await dm.async_pull_module(module_id)
+        # C2：安装流程启用 env-file 优先（剔除进程占位键，让新安装 config 生效）
+        rc, stdout, stderr = await dm.async_pull_module(module_id, prefer_env_file=True)
+        if stdout:
+            # 显示本地命中/构建等 pull 阶段信息（如 F2 的 [local-hit]/[local-build]）
+            task["log"].append(stdout.strip().split("\n")[-1])
         if rc != 0:
             diag = DockerManager.diagnose_pull_error(stderr or "")
             raise _InstallError(
@@ -99,11 +132,25 @@ async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager
         # 阶段 2：启动容器
         task["stage"] = "up"
         task["log"].append("镜像就绪，正在启动容器...")
-        result = await dm.async_start_module(module_id)
+        # C2：安装流程启用 env-file 优先；restart 等生命周期保持进程 env 优先（存量兼容）
+        result = await dm.async_start_module(module_id, prefer_env_file=True)
+        # C4：up 已尝试——成败均可能留下容器（多服务部分启动），后续失败均需清理
+        containers_started = True
         if not result.get("success"):
             raise _InstallError(
                 f"容器启动失败: {result.get('error', '未知错误')}",
                 result.get("error") or ""
+            )
+
+        # 阶段 3：健康门控（F1）——up 成功 ≠ 能稳定运行（如缺少证书/配置时容器会崩溃重启），
+        # 安装完成前轮询容器状态，未达到健康则视为失败并走回滚
+        task["stage"] = "health"
+        task["log"].append("容器已启动，正在等待健康检查...")
+        health = await dm.async_wait_module_healthy(module_id)
+        if not health.get("success"):
+            raise _InstallError(
+                f"容器启动后未达到健康状态: {health.get('error', '未知原因')}",
+                health.get("logs") or ""
             )
 
         task["status"] = TASK_SUCCESS
@@ -116,11 +163,15 @@ async def _run_install_task(module_id: str, cm: ConfigManager, dm: DockerManager
         task["status"] = TASK_FAILED
         task["error"] = {"hint": e.hint, "detail": e.detail}
         task["log"].append(f"安装失败: {e.hint}")
+        if containers_started:
+            await _remove_started_containers(dm, module_id, task)
     except Exception as e:
         cm.remove_installed_module(module_id)  # 回滚安装状态
         task["status"] = TASK_FAILED
         task["error"] = {"hint": f"安装过程中发生未预期错误: {str(e)}", "detail": str(e)}
         task["log"].append(f"安装失败: {str(e)}")
+        if containers_started:
+            await _remove_started_containers(dm, module_id, task)
     finally:
         task["finished_at"] = time.time()
         _cleanup_install_tasks()
@@ -242,7 +293,7 @@ async def install_module(request: InstallRequest):
         "created_at": time.time(),
         "finished_at": None,
     }
-    asyncio.create_task(_run_install_task(module_id, cm, dm, ml))
+    asyncio.create_task(_run_install_task(module_id, config, cm, dm, ml))
 
     return {
         "success": True,

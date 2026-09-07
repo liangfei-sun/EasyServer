@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -15,6 +16,28 @@ import yaml
 from .module_loader import ModuleLoader
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_compose_ps_containers(stdout: str) -> list:
+    """解析 docker compose ps --format json 输出，兼容逐行 JSON 与整体数组两种格式"""
+    if not stdout or not stdout.strip():
+        return []
+    try:
+        parsed = json.loads(stdout)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            return [parsed]
+    except json.JSONDecodeError:
+        pass
+    containers = []
+    for line in stdout.strip().split("\n"):
+        if line.strip():
+            try:
+                containers.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return containers
 
 
 class DockerManager:
@@ -56,7 +79,49 @@ class DockerManager:
 
     def _get_env_file(self) -> Optional[Path]:
         env_file = self.project_root / ".env"
-        return env_file if env_file.exists() else None
+        # AA 附带防御：R29 曾出现 .env 为目录的陷阱，is_file 避免把目录传给 --env-file
+        return env_file if env_file.is_file() else None
+
+    @staticmethod
+    def _read_env_file_keys(env_file: Path) -> set:
+        """读取 env 文件中定义的键名集合（AA：用于从进程环境剔除同键变量）"""
+        keys = set()
+        try:
+            with open(env_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    keys.add(line.split("=", 1)[0].strip())
+        except OSError:
+            pass
+        return keys
+
+    def _compose_process_env(self, prefer_env_file: bool = False) -> dict:
+        """构建 compose 子进程环境变量（AA，C2 收敛作用域）
+
+        docker compose 变量解析中进程 env 优先于 --env-file；core 容器经
+        docker-compose.yml 的 env_file: .env 预置的模块占位键（如
+        NEXTCLOUD_PORT=8888、NEXTCLOUD_ADMIN_PASSWORD=change_me_nextcloud）
+        会压制安装时写入 --env-file 的真实 config 值。
+
+        C2：剔除逻辑仅在模块安装流程启用（prefer_env_file=True，_run_install_task
+        的 prepare/pull/up 路径）——占位值会压制新安装的 config；生命周期操作
+        （restart/update/remove/logs/status）保持默认 False = 进程 env 优先
+        （AA 修复前的旧行为）：存量模块（AA 修复前以进程占位值实际初始化/运行，
+        如 joplin-db 以 change_me_joplin_db 初始化）升级后重启/更新必须继续
+        沿用其实际运行值，改用 .env 表单记录值会与既有数据卷凭据失配
+        （joplin-app 以新密码认证旧库静默失败而 restart 误报 success）。
+        宿主路径覆盖（PROJECT_ROOT_HOST/DATA_DIR_HOST）两种模式均生效。
+        """
+        env = dict(os.environ)
+        if prefer_env_file:
+            env_file = self._get_env_file()
+            if env_file:
+                for key in self._read_env_file_keys(env_file):
+                    env.pop(key, None)
+        env.update(self._get_host_env_overrides())
+        return env
 
     def _get_host_env_overrides(self) -> dict:
         """当运行在 Docker 容器内时，返回需要用宿主机路径覆盖的环境变量映射。
@@ -84,40 +149,31 @@ class DockerManager:
         cmd.extend(args)
         return cmd
 
-    def _run_compose(self, module_id: str, *args, check: bool = True) -> subprocess.CompletedProcess:
+    def _run_compose(self, module_id: str, *args, check: bool = True, prefer_env_file: bool = False) -> subprocess.CompletedProcess:
         cmd = self._build_compose_cmd(module_id, *args)
         module_dir = self.modules_dir / module_id
-        # 注入宿主机路径覆盖（Docker socket 模式下 volume 需要宿主机路径）
-        env = None
-        overrides = self._get_host_env_overrides()
-        if overrides:
-            env = {**os.environ, **overrides}
+        # C2：剔除与 env-file 同键的进程占位变量仅在安装流程启用（默认进程 env 优先）
+        env = self._compose_process_env(prefer_env_file)
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(module_dir), timeout=120, env=env)
         if check and result.returncode != 0:
             raise RuntimeError(f"Docker compose 命令失败: {result.stderr}")
         return result
 
-    async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120) -> tuple:
-        """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)"""
+    async def _async_run_compose(self, module_id: str, *args, check: bool = True, timeout: int = 120, prefer_env_file: bool = False) -> tuple:
+        """异步执行 docker compose 命令，返回 (returncode, stdout, stderr)
+
+        C8②：超时统一走 _run_cmd_with_timeout（terminate→10s→kill），
+        消除 build/pull 等路径超时遗留的孤儿 compose 进程。
+        """
         cmd = self._build_compose_cmd(module_id, *args)
-        # 注入宿主机路径覆盖（Docker socket 模式下 volume 需要宿主机路径）
-        env = None
-        overrides = self._get_host_env_overrides()
-        if overrides:
-            env = {**os.environ, **overrides}
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self.modules_dir / module_id),
-            env=env
+        # C2：剔除与 env-file 同键的进程占位变量仅在安装流程启用（默认进程 env 优先）
+        env = self._compose_process_env(prefer_env_file)
+        rc, stdout, stderr = await self._run_cmd_with_timeout(
+            cmd, timeout, cwd=str(self.modules_dir / module_id), env=env
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        stdout_str = stdout.decode()
-        stderr_str = stderr.decode()
-        if check and proc.returncode != 0:
-            raise RuntimeError(f"Docker compose 命令失败: {stderr_str}")
-        return proc.returncode, stdout_str, stderr_str
+        if check and rc != 0:
+            raise RuntimeError(f"Docker compose 命令失败: {stderr}")
+        return rc, stdout, stderr
 
     def start_module(self, module_id: str) -> dict:
         result = self._run_compose(module_id, "up", "-d")
@@ -167,25 +223,61 @@ class DockerManager:
         result = self._run_compose(module_id, "logs", "--no-color", "--tail", str(lines), check=False)
         return result.stdout + result.stderr
 
-    async def async_start_module(self, module_id: str) -> dict:
+    async def async_start_module(self, module_id: str, prefer_env_file: bool = False) -> dict:
         # 启动可能涉及镜像拉取，超时设为 10 分钟
-        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600)
+        # C2：prefer_env_file 仅安装流程传 True；restart 等生命周期保持进程 env 优先
+        rc, stdout, stderr = await self._async_run_compose(module_id, "up", "-d", timeout=600, prefer_env_file=prefer_env_file)
         return {"module": module_id, "action": "start", "success": rc == 0, "output": stdout, "error": stderr if rc != 0 else None}
 
-    async def async_pull_module(self, module_id: str, max_retries: int = 3) -> tuple:
+    async def async_pull_module(self, module_id: str, max_retries: int = 3, prefer_env_file: bool = False) -> tuple:
         """拉取模块镜像，返回 (returncode, stdout, stderr)
 
         与启动分离：pull 失败说明是镜像/网络问题，可精确定位诊断。
         大镜像拉取耗时长，超时设为 10 分钟。
         网络波动时自动指数退避重试（最多 max_retries 次）。
+        C2：prefer_env_file 仅安装流程传 True（占位值不应压制新安装 config）。
+
+        F2：拉取前先做本地短路——
+        - compose 含 build 段（如 backup/nextcloud）→ registry 无此镜像，
+          pull 必然结构性失败，改为显式 compose build 本地构建；
+        - 全部引用镜像本地已存在 → 跳过网络拉取（stdout 返回 [local-hit]）。
         """
+        # F2：本地短路（build 型走本地构建，已拉取镜像直接命中）
+        if self._compose_has_build(module_id):
+            logger.info(f"Module {module_id} compose has build section, building locally instead of pull")
+            # 构建含基础镜像拉取与软件包安装，耗时上限独立于 pull 设为 20 分钟
+            rc, stdout, stderr = await self._async_run_compose(module_id, "build", check=False, timeout=1200, prefer_env_file=prefer_env_file)
+            if rc == 0:
+                return 0, "[local-build] compose 含 build 段，已改为本地构建镜像", stderr
+            return rc, stdout, stderr
+        images = await self.get_module_images(module_id, prefer_env_file=prefer_env_file)
+        # C6：has_local_image 已改 async，列表推导内 await（事件循环不被同步 inspect 阻塞）
+        if images and all([await self.has_local_image(img) for img in images]):
+            logger.info(f"Module {module_id} images all present locally: {images}")
+            return 0, f"[local-hit] 镜像本地已存在，跳过拉取: {', '.join(images)}", ""
+
         base_delay = 2
         for attempt in range(max_retries):
-            rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600)
+            rc, stdout, stderr = await self._async_run_compose(module_id, "pull", check=False, timeout=600, prefer_env_file=prefer_env_file)
             if rc == 0:
                 return rc, stdout, stderr
-            # 最后一次尝试直接返回，不再等待
+            # 最后一次尝试：F3 降级兑底（denied/manifest）→ 仍缺镜像则维持原失败
             if attempt == max_retries - 1:
+                diag = self.diagnose_pull_error(stderr or "")
+                if diag.get("type") == "manifest":
+                    # 精确 tag 被拒（denied/manifest unknown）→ 仅对本次拉取后仍缺失的镜像
+                    # 尝试拉 repo:latest 并回打原 tag（Z：compose pull 已成功的镜像已在本地，
+                    # 不纳入降级候选，避免多镜像 compose 把成功项一并作废）
+                    images = await self.get_module_images(module_id, prefer_env_file=prefer_env_file)
+                    candidates = [img for img in images if "@" not in img and not await self.has_local_image(img)]
+                    degraded = await self._fallback_pull_latest(candidates) if candidates else []
+                    # Z：成功判据结果导向——compose 所需镜像全部本地可用即成功，
+                    # 个别 latest 拉取失败不整体作废；仍缺镜像则维持原失败
+                    missing = [img for img in images if not await self.has_local_image(img)]
+                    if images and not missing:
+                        detail = "; ".join(degraded) if degraded else "（所需镜像已在本地，无需降级）"
+                        logger.info(f"Latest-tag fallback for {module_id}: {detail}")
+                        return 0, f"[latest-fallback] 精确 tag 拉取被拒，已降级 latest 并回打原 tag: {detail}", stderr
                 logger.warning(f"Image pull failed for {module_id} after {max_retries} attempts")
                 return rc, stdout, stderr
             delay = base_delay * (2 ** attempt)
@@ -193,6 +285,99 @@ class DockerManager:
             await asyncio.sleep(delay)
         # unreachable, but satisfy type checker
         return rc, stdout, stderr
+
+    @staticmethod
+    async def _run_cmd_with_timeout(cmd: list, timeout: int, cwd: str = None, env: dict = None) -> tuple:
+        """Z：执行命令并在超时时终止子进程
+
+        asyncio.wait_for 超时仅取消等待、不终止子进程，会遗留孤儿 docker pull
+        长时间占用资源；此处超时后 terminate → 等待 10s → 仍不退则 kill。
+        C8②：_async_run_compose 统一复用本方法（cwd/env 由调用方传入），
+        build/pull 等所有 compose 路径超时同样孤儿消除（原先仅 fallback pull 有）。
+        返回 (returncode, stdout, stderr)；超时或无法创建进程时 rc=-1。
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=cwd, env=env
+            )
+        except OSError as e:
+            return -1, "", f"failed to spawn {' '.join(cmd)}: {e}"
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return proc.returncode, stdout.decode(), stderr.decode()
+        except asyncio.TimeoutError:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+            return -1, "", f"command timed out after {timeout}s and was terminated: {' '.join(cmd)}"
+
+    async def _fallback_pull_latest(self, images: list) -> list:
+        """F3：对非 latest 镜像引用执行 tag 降级（pull repo:latest + tag 回原引用）
+
+        返回成功降级的镜像明细列表（如 'repo:1.0 ← repo:latest'）。
+        单个镜像降级失败不影响其他镜像；是否整体成功由调用方以结果导向判定
+        （Z：compose 所需镜像是否全部本地可用）。
+        """
+        degraded = []
+        for image in images:
+            if "@" in image:  # digest 引用不降级
+                continue
+            repo, sep, tag = image.rpartition(":")
+            if not sep or not repo or tag == "latest":
+                continue
+            rc, _, _ = await self._run_cmd_with_timeout(["docker", "pull", f"{repo}:latest"], timeout=600)
+            if rc != 0:
+                continue
+            rc, _, _ = await self._run_cmd_with_timeout(["docker", "tag", f"{repo}:latest", image], timeout=30)
+            if rc != 0:
+                continue
+            degraded.append(f"{image} ← {repo}:latest")
+            logger.info(f"Image latest-fallback: pulled {repo}:latest and tagged as {image}")
+        return degraded
+
+    async def get_module_images(self, module_id: str, prefer_env_file: bool = False) -> list:
+        """列出模块 compose 引用的镜像（docker compose config --images）"""
+        try:
+            rc, stdout, stderr = await self._async_run_compose(module_id, "config", "--images", check=False, prefer_env_file=prefer_env_file)
+        except Exception:
+            return []
+        if rc != 0:
+            return []
+        return [line.strip() for line in stdout.strip().split("\n") if line.strip()]
+
+    async def has_local_image(self, image: str) -> bool:
+        """检查镜像是否已存在于本地（docker image inspect）
+
+        C6：原为同步 subprocess.run，被 async 协程（async_pull_module 的
+        多镜像循环）调用时阻塞事件循环；改为线程池执行，调用点同步改 await。
+        """
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "image", "inspect", image],
+                capture_output=True, text=True, timeout=15
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+
+    def _compose_has_build(self, module_id: str) -> bool:
+        """检查模块 compose 是否包含 build 段（build 型模块不走 registry pull）"""
+        compose_file = self.modules_dir / module_id / "docker-compose.yml"
+        if not compose_file.exists():
+            return False
+        try:
+            with open(compose_file, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f) or {}
+        except Exception:
+            return False
+        for svc in (compose.get("services") or {}).values():
+            if isinstance(svc, dict) and svc.get("build") is not None:
+                return True
+        return False
 
     async def async_stop_module(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "down")
@@ -329,6 +514,264 @@ class DockerManager:
         result.sort(key=lambda x: len(x.parts), reverse=True)
         return result
 
+    # 配置类文件扩展名：bind 挂载源路径带此类后缀视为单文件挂载（F4）
+    _CONFIG_FILE_SUFFIXES = {".yaml", ".yml", ".json", ".env", ".conf", ".ini", ".toml", ".xml", ".properties"}
+
+    def _expand_env_value(self, value: str, env: dict) -> str:
+        """展开 compose 值中的 ${VAR:-default} / $VAR 变量（与 resolve_module_data_paths 同规则）"""
+        def repl(m):
+            default = m.group(2) or ""
+            return env.get(m.group(1)) or default
+        value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}", repl, value)
+        value = re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", lambda m: env.get(m.group(1), ""), value)
+        return value
+
+    async def _write_host_file(self, host_path: str, content: str) -> tuple:
+        """经 docker daemon 在宿主侧写入文件（F4）
+
+        core 容器未挂载宿主数据路径（仅挂 docker.sock），无法直接写宿主文件；
+        使用 core 自身镜像起一次性容器执行写入，避免额外镜像依赖。
+        父目录不存在时 bind 挂载会由 daemon 自动创建。
+        C5：host_path 仅允许运行时数据根之下（宿主视角，防经 compose 模板
+        指向任意宿主路径的写入）；文件名经 shlex.quote，防含 shell 元字符
+        的文件名注入容器 sh -c。
+        返回 (成功, 错误信息)。
+        """
+        # C5：路径边界校验（与 prepare_data_dirs 同一套根，含 '/' 边界过滤）
+        roots = self._runtime_data_roots()
+        if not any(host_path.startswith(r + "/") for r in roots):
+            return False, f"拒绝写入：{host_path} 不在运行时数据根之下"
+        parent = str(Path(host_path).parent.as_posix())
+        fname = Path(host_path).name
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "run", "--rm", "-i", "--entrypoint", "sh",
+                "-v", f"{parent}:/mnt",
+                await self._core_image(),
+                "-c", f"cat > /mnt/{shlex.quote(fname)}",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(content.encode()), timeout=120)
+            if proc.returncode != 0:
+                return False, stderr.decode(errors="replace").strip()[:200]
+            return True, ""
+        except (asyncio.TimeoutError, OSError) as e:
+            return False, str(e)[:200]
+
+    async def _core_image(self) -> str:
+        """获取 core 自身镜像名（用于经 daemon 执行宿主侧写文件）
+
+        C6：原为同步 subprocess.run（调用方 _write_host_file 为 async），
+        阻塞事件循环；改为线程池执行。
+        """
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "inspect", "easyserver-core", "--format", "{{.Config.Image}}"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return "busybox:latest"
+
+    def _build_render_context(self, module_id: str, config: dict) -> dict:
+        """构建模块模板渲染上下文（F4）
+
+        同时提供：原始键、小写键、剥离模块前缀的小写键（如
+        NOTEDISCOVERY_PASSWORD → password），覆盖常见模板命名习惯；
+        auth_enabled 为布尔约定：存在非空 password 即启用认证。
+        """
+        ctx = {}
+        prefix = module_id.replace("-", "_").upper() + "_"
+        for k, v in config.items():
+            ctx[k] = v
+            ctx[k.lower()] = v
+            if k.upper().startswith(prefix):
+                ctx[k[len(prefix):].lower()] = v
+        ctx.setdefault("auth_enabled", bool(ctx.get("password")))
+        return ctx
+
+    async def prepare_single_file_mounts(self, module_id: str, config: dict) -> list:
+        """安装前预创建 compose 单文件 bind 挂载的宿主文件（F4）
+
+        Docker 对不存在的 bind 源只会自动创建目录——期望单文件的挂载会变成
+        同名目录陷阱（容器活着但配置永远写不进）。本方法在安装前：
+        - 解析 compose volumes 中宿主源路径不存在且带配置类扩展名的挂载；
+        - 模块 templates/<文件名>.j2 存在 → 用安装配置渲染生成；
+        - 无模板 → 创建空文件并记录警告（部分应用空配置仍会崩溃，需模块指南说明）。
+        宿主已存在的路径一律跳过（不覆盖用户数据）。
+        返回动作描述列表（供安装日志展示）。
+        """
+        compose_file = self.modules_dir / module_id / "docker-compose.yml"
+        if not compose_file.exists():
+            return []
+        try:
+            with open(compose_file, "r", encoding="utf-8") as f:
+                compose = yaml.safe_load(f) or {}
+        except Exception:
+            return []
+        env = self._load_env_dict()
+        env.update(self._get_host_env_overrides())  # daemon 视角宿主路径覆盖优先
+
+        actions = []
+        for svc in (compose.get("services") or {}).values():
+            volumes = []
+            if isinstance(svc, dict):
+                volumes = svc.get("volumes") or []
+            if isinstance(volumes, dict):
+                volumes = list(volumes.values())
+            for vol in volumes:
+                source = ""
+                if isinstance(vol, dict):
+                    source = vol.get("source", "") or vol.get("src", "")
+                elif isinstance(vol, str):
+                    # 提取宿主段（跳过 ${...} 块，其内部可能含冒号；同 _split_host_source 规则）
+                    i, depth = 0, 0
+                    while i < len(vol):
+                        ch = vol[i]
+                        if ch == "$" and i + 1 < len(vol) and vol[i + 1] == "{":
+                            depth = 1
+                            i += 2  # 一起消费 ${
+                            continue
+                        if depth:
+                            if ch == "{":
+                                depth += 1
+                            elif ch == "}":
+                                depth -= 1
+                            i += 1
+                            continue
+                        if ch == ":":
+                            break
+                        i += 1
+                    source = vol[:i]
+                if not source:
+                    continue
+                host_path = self._expand_env_value(source, env).strip()
+                if not host_path:
+                    continue
+                p = Path(host_path)
+                if p.exists() or p.suffix.lower() not in self._CONFIG_FILE_SUFFIXES:
+                    continue
+
+                template = self.modules_dir / module_id / "templates" / f"{p.name}.j2"
+                if template.exists():
+                    try:
+                        from jinja2 import Environment, FileSystemLoader
+                        jenv = Environment(loader=FileSystemLoader(str(template.parent)))
+                        ctx = self._build_render_context(module_id, config)
+                        content = jenv.get_template(template.name).render(**ctx)
+                        how = f"模板渲染 {template.name}"
+                    except Exception as e:
+                        actions.append(f"警告：模板 {template.name} 渲染失败（{e}），将创建空文件")
+                        content, how = "", "空文件"
+                else:
+                    content = ""
+                    how = "空文件（模块未提供模板，若应用要求合法配置请参考模块指南）"
+                ok, err = await self._write_host_file(host_path, content)
+                if ok:
+                    actions.append(f"预创建配置文件 {host_path}（{how}）")
+                else:
+                    actions.append(f"警告：预创建 {host_path} 失败: {err}")
+        return actions
+
+    def _runtime_data_roots(self) -> list:
+        """运行时数据根（宿主视角），prepare_data_dirs 与 _write_host_file 共用
+
+        C8①：rstrip('/') 会把根 '/' 削成空串，空串（或 '/' 本身）会让任意
+        绝对路径通过 startswith 边界校验，故过滤空根与 '/'。
+        """
+        data_root = (os.environ.get("DATA_DIR_HOST") or os.environ.get("DATA_DIR") or "/data").rstrip("/")
+        project_root = (os.environ.get("PROJECT_ROOT_HOST") or str(self.project_root)).rstrip("/")
+        return [r for r in (data_root, project_root) if r and r != "/"]
+
+    def _host_to_container_path(self, host_path: str) -> str:
+        """把宿主数据根下的绝对路径换算为 core 容器内挂载点路径（C1）
+
+        compose config 渲染出的挂载 source 是宿主绝对路径（DATA_DIR_HOST /
+        PROJECT_ROOT_HOST 值）；core 容器只挂载 DATA_DIR→/data 与
+        PROJECT_ROOT→/easyserver_data，容器内并不存在该宿主路径——直接对
+        source 做 exists/mkdir/chown 会落在容器可写层，宿主目录仍为
+        root:root（AB 修复在推荐配置 DATA_DIR=/home/... 下静默失效，仅在
+        默认 DATA_DIR=/data 恰好命中时才碰巧成功）。
+        故按挂载映射换算：DATA_DIR_HOST 前缀 → /data 前缀，
+        PROJECT_ROOT_HOST 前缀 → /easyserver_data 前缀（DATA_DIR_HOST 更
+        具体，优先匹配）。非 Docker 运行（无 *_HOST 注入，core 进程直接
+        跑在宿主）时路径本机可见，原样返回。
+        """
+        data_root = (os.environ.get("DATA_DIR_HOST") or "").rstrip("/")
+        project_root = (os.environ.get("PROJECT_ROOT_HOST") or "").rstrip("/")
+        for root, mount in ((data_root, "/data"), (project_root, "/easyserver_data")):
+            if root and root != "/" and host_path.startswith(root + "/"):
+                return mount + host_path[len(root):]
+        return host_path
+
+    async def prepare_data_dirs(self, module_id: str) -> list:
+        """安装前预创建模块数据目录并修正属主为 uid 1000（AB，C1 修正作用域）
+
+        docker daemon 为不存在的 bind 源创建的目录属主为 root:root，以
+        uid 1000 运行的镜像（filebrowser 等）首启写入即 EACCES（API 呈现 403）。
+        经 docker compose config 渲染解析 bind 挂载（变量插值与 up 实际一致），
+        仅对运行时数据根（DATA_DIR / PROJECT_ROOT）之下、不存在的新建目录
+        chown 1000:1000；已存在目录一律不触碰（避免破坏 postgres 类
+        非 1000 属主数据，其镜像入口会自行 chown）。只读挂载与单文件挂载
+        （F4 prepare_single_file_mounts 负责）跳过。
+        C1：渲染出的 source 为宿主绝对路径，core 容器内不存在该路径——先经
+        _host_to_container_path 换算为容器内挂载点（/data、/easyserver_data）
+        再 exists/mkdir/chown，经 bind 挂载实际生效于宿主目录。
+        返回动作描述列表（供安装日志展示）。
+        """
+        actions = []
+        try:
+            # C2：prepare 仅在安装流程调用，剔除占位键让新安装 config 参与渲染
+            rc, stdout, stderr = await self._async_run_compose(module_id, "config", check=False, prefer_env_file=True)
+        except Exception as e:
+            logger.warning(f"Module {module_id} prepare_data_dirs: compose config failed: {e}")
+            return actions
+        if rc != 0:
+            logger.warning(f"Module {module_id} prepare_data_dirs: compose config rc={rc}")
+            return actions
+        try:
+            compose = yaml.safe_load(stdout) or {}
+        except yaml.YAMLError as e:
+            logger.warning(f"Module {module_id} prepare_data_dirs: parse config failed: {e}")
+            return actions
+        roots = self._runtime_data_roots()
+        for svc in (compose.get("services") or {}).values():
+            volumes = (svc.get("volumes") or []) if isinstance(svc, dict) else []
+            for vol in volumes:
+                if not isinstance(vol, dict):
+                    continue
+                if vol.get("type") not in (None, "bind") or vol.get("read_only"):
+                    continue
+                source = str(vol.get("source") or "")
+                if not source.startswith("/"):
+                    if source.startswith(("./", "../")):
+                        source = str((self.modules_dir / module_id / source).resolve())
+                    else:
+                        continue  # 命名卷由 daemon 管理
+                if Path(source).suffix.lower() in self._CONFIG_FILE_SUFFIXES:
+                    continue  # 单文件挂载由 F4 处理
+                if not any(source.startswith(r + "/") for r in roots):
+                    continue  # 仅运行时数据根之下
+                # C1：source 是宿主绝对路径，core 容器内不存在；换算为容器内
+                # 挂载点后再操作，mkdir/chown 经 bind 挂载实际落在宿主目录
+                p = Path(self._host_to_container_path(source))
+                if p.exists():
+                    continue  # 已存在目录不触碰（避免破坏既有属主）
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                    os.chown(p, 1000, 1000)
+                    actions.append(f"预创建数据目录并修正属主 1000:1000: {source}")
+                    logger.info(f"Module {module_id} data dir prepared with owner 1000:1000: {source}")
+                except OSError as e:
+                    logger.warning(f"Module {module_id} data dir prepare failed for {source}: {e}")
+                    actions.append(f"警告：数据目录 {source} 预创建/chown 失败: {e}")
+        return actions
+
     async def async_get_module_status(self, module_id: str) -> dict:
         rc, stdout, stderr = await self._async_run_compose(module_id, "ps", "-a", "--format", "json", check=False)
         containers = []
@@ -344,6 +787,111 @@ class DockerManager:
     async def async_get_module_logs(self, module_id: str, lines: int = 100) -> str:
         rc, stdout, stderr = await self._async_run_compose(module_id, "logs", "--no-color", "--tail", str(lines), check=False)
         return stdout + stderr
+
+    async def _async_inspect_state(self, container_id: str) -> Optional[dict]:
+        """docker inspect 读取容器 State（Status/Health/RestartCount），失败返回 None"""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "inspect", "--format", "{{json .State}}", container_id,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+            if proc.returncode != 0:
+                return None
+            return json.loads(stdout.decode())
+        except (asyncio.TimeoutError, json.JSONDecodeError, OSError):
+            return None
+
+    async def async_wait_module_healthy(self, module_id: str, timeout: int = 90, interval: int = 3) -> dict:
+        """安装后健康门控：轮询模块容器状态，稳定运行判成功（F1）
+
+        成功条件：全部容器 Status=running（声明了 healthcheck 的须 Health=healthy），
+        且连续 2 次轮询 RestartCount 不增（排除启动即崩溃重启的假健康）。
+        仅依赖 Docker 状态探测，不做 HTTP 探测——core 与模块处于不同网络，
+        无法通过宿主 127.0.0.1 端口探测。
+        失败/超时返回时附带 compose logs --tail 30，用于展示真实失败原因。
+
+        返回 {success, error, logs, containers, restarts}
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        stable_rounds = 0
+        prev_restarts = None
+        last_reason = f"健康探测超时（{timeout}s）"
+
+        while loop.time() < deadline:
+            # C8③：ps -a 让崩溃退出的容器可见——无 -a 时 exited 容器从列表消失，
+            # 多服务模块单服务崩溃会误判"全部健康"（理论假成功）；
+            # 下方逐容器状态校验对非 running 直接判败
+            rc, stdout, stderr = await self._async_run_compose(
+                module_id, "ps", "-a", "--format", "json", check=False
+            )
+            containers = _parse_compose_ps_containers(stdout) if rc == 0 else []
+            if not containers:
+                last_reason = (stderr or "").strip() or "docker compose ps 未发现任何容器"
+                stable_rounds = 0
+                prev_restarts = None
+                await asyncio.sleep(interval)
+                continue
+
+            container_names = []
+            all_ok = True
+            total_restarts = 0
+            reasons = []
+            for c in containers:
+                cid = c.get("ID") or c.get("Id") or ""
+                name = c.get("Name") or c.get("name") or cid
+                container_names.append(name)
+                state = await self._async_inspect_state(cid) if cid else None
+                if state is None:
+                    all_ok = False
+                    reasons.append(f"容器 {name} 无法读取运行状态")
+                    continue
+                status = state.get("Status", "")
+                health = (state.get("Health") or {}).get("Status")  # 无 healthcheck 时为 None
+                restarts = state.get("RestartCount", 0) or 0
+                total_restarts += restarts
+                running = status == "running"
+                health_ok = health is None or health == "healthy"
+                if not running:
+                    all_ok = False
+                    reason = f"容器 {name} 状态为 {status}"
+                    if state.get("ExitCode") not in (None, 0):
+                        reason += f"（退出码 {state.get('ExitCode')}）"
+                    reasons.append(reason)
+                elif not health_ok:
+                    all_ok = False
+                    reasons.append(f"容器 {name} 健康检查为 {health}")
+
+            if all_ok:
+                if prev_restarts is not None and total_restarts <= prev_restarts:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 1
+                prev_restarts = total_restarts
+                if stable_rounds >= 2:
+                    return {
+                        "success": True,
+                        "error": "",
+                        "logs": "",
+                        "containers": container_names,
+                        "restarts": total_restarts,
+                    }
+            else:
+                stable_rounds = 0
+                prev_restarts = None
+                last_reason = "; ".join(reasons) or last_reason
+            await asyncio.sleep(interval)
+
+        logs = await self.async_get_module_logs(module_id, lines=30)
+        return {
+            "success": False,
+            "error": last_reason,
+            "logs": logs,
+            "containers": [],
+            "restarts": None,
+        }
 
     def _load_env_dict(self) -> dict:
         """加载 .env 文件为字典"""
