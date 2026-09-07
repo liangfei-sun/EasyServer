@@ -2,7 +2,8 @@
 
 > 基于 2026-09-04 WSL Ubuntu 24.04 实测（QA 报告 R13）。实测结论与上游描述不一致处，以实测为准并已标注。
 > **凭据要求：本模块需自备 DNS API 凭据（阿里云 AccessKey 或 Cloudflare Token）与自有域名。因真实签发涉及 Let's Encrypt 限额风险，本指南验证到启动层（凭据校验/降级断言），未执行真实签发。**
-> **第二预警：实测镜像 `neilpang/acme.sh:v3.0.9` 拉取被拒（denied，PULL_BLOCKED）**，当前网络环境下即便凭据齐备也无法完成安装，见 3.2 与 FAQ。
+> ~~**第二预警：实测镜像 `neilpang/acme.sh:v3.0.9` 拉取被拒（denied，PULL_BLOCKED）**~~ —— **已修复（2026-09-07，BUG-7，commit `e302c3f`）**：compose 镜像 tag 已从 `v3.0.9` 改为 `latest`，实测可正常拉取启动（`neilpang/acme.sh:latest`，容器 Up）。
+> **2026-09-07 修复更新**：缺陷 L（`dns-credentials.env` 硬依赖）已由 BUG-4（commit `d5e321a`）缓解：`configure_network`（domain/hybrid 模式）启动 acme 前自动创建该文件（无凭据时为空文件），acme 不再因文件缺失启动失败。
 
 ## 1. 概述
 
@@ -10,7 +11,7 @@ ACME 模块基于 acme.sh 自动申请与续签 Let's Encrypt SSL 证书，采�
 
 | 项 | 值 |
 |------|------|
-| 镜像 | `neilpang/acme.sh:v3.0.9`（**实测拉取被拒，PULL_BLOCKED**） |
+| 镜像 | `neilpang/acme.sh:latest`（BUG-7 修复后；原 `v3.0.9` 精确 tag 被 Docker Hub 拒绝，实测 `latest` 可正常拉取运行） |
 | 分类 | infra |
 | 网络模式 | `network_mode: host`（CLI 型无需端口映射） |
 | 端口 | 无（CLI 型） |
@@ -25,7 +26,7 @@ ACME 模块基于 acme.sh 自动申请与续签 Let's Encrypt SSL 证书，采�
   - **阿里云**：登录 RAM 控制台创建子用户，授权 `AliyunDNSFullAccess`，生成 AccessKey ID 与 Secret
   - **Cloudflare**：Dashboard → My Profile → API Tokens → Create Custom Token，权限 `Zone > DNS > Edit`，Zone Resources 选定域名
 - **自有域名**：DNS 已托管在对应服务商；`ACME_DOMAIN` 填主域名（如 `example.com`，非子域名）
-- **镜像可用性（实测预警）**：`neilpang/acme.sh:v3.0.9` 在实测环境（Docker Hub mirror 链路）拉取被拒——错误为 `error from registry: denied`（非网络超时，疑似 Docker Hub 对该镜像/tag 的访问限制）。主池预拉取与手动补拉均失败
+- **镜像可用性（已修复）**：早期实测 `neilpang/acme.sh:v3.0.9` 拉取被拒（`error from registry: denied`）；BUG-7 修复（commit `e302c3f`）后 compose 使用 `latest` tag，实测容器成功启动运行
 
 ## 3. 安装
 
@@ -41,19 +42,19 @@ ACME 模块基于 acme.sh 自动申请与续签 Let's Encrypt SSL 证书，采�
 
 > 凭据类字段（key/secret/token）在面板表单中按 `show_when` 联动显示——选择 DNS 提供商后仅展示对应字段。
 
-### 3.2 安装路径与实测行为（凭据校验闭环有效 + 镜像阻塞）
+### 3.2 安装路径与实测行为（凭据校验闭环有效；镜像阻塞已修复）
 
 **无凭据时（实测）**：引擎前置校验闭环有效——`POST /api/modules/install {"module_id":"acme"}` 返回 **400 `{"detail":"字段「DNS 提供商」为必填项"}`**，不会像 filebrowser/ddns-go 那样产生半安装状态。⚠️ 错误文案为表单式中文字符串，未指明合法取值集合（缺陷 K，P3）。
 
-**凭据齐备时（降级推断）**：安装仍会被镜像拉取阻塞——实测 `neilpang/acme.sh:v3.0.9` PULL_BLOCKED（主池 + 手动补拉均 `denied`）。当前网络环境下面板安装 acme 无法完成，可尝试：
+**凭据齐备时**：早期实测被 `v3.0.9` 镜像拉取阻塞；**BUG-7 修复后（镜像 tag 改为 `latest`）已解除**，实测 `configure_network(hybrid)` 后 acme 容器成功启动（`docker ps` 确认 Up 状态）。
 
 ```bash
-# 手动补拉尝试（实测失败，仅作记录）
-docker pull neilpang/acme.sh:v3.0.9
+# 历史记录：旧 tag 拉取失败（BUG-7 修复前，现已改用 latest）
+# docker pull neilpang/acme.sh:v3.0.9
 # 实测输出：Error response from daemon: error from registry: denied
 ```
 
-**`dns-credentials.env` 硬依赖（缺陷 L，P2）**：compose 中 `env_file: ./dns-credentials.env` 为硬引用——实测无该文件时**连 `docker compose config` 语法校验都失败**（`env file ... not found`），`up` 必败。该文件由引擎在安装时生成（含凭据），但"仅浏览/校验配置"的合法场景被此硬依赖阻断。compose v2.24+ 可用 `required: false` 修复。
+**`dns-credentials.env` 硬依赖（缺陷 L，P2 —— BUG-4 修复后已缓解）**：compose 中 `env_file: ./dns-credentials.env` 仍为硬引用（无该文件时 `docker compose config`/`up` 必败），但 **BUG-4 修复（commit `d5e321a`）后 `configure_network` 流程会自动创建该文件**：domain/hybrid 模式启动 acme 前，引擎检查 `modules/acme/dns-credentials.env` 是否存在，不存在则创建空文件（实测确认 0 字节文件已创建，acme compose 可正常启动）。有凭据时安装流程写入凭据内容。残留限制：绕过引擎直接在宿主手动跑 `docker compose config`（未经 `configure_network`、也未安装过 acme）仍可能遇到文件缺失，手动 `touch` 即可；彻底修复可用 compose v2.24+ 的 `required: false`。
 
 ## 4. 启动与验证
 
@@ -70,9 +71,9 @@ curl -s -X POST -H "Authorization: Bearer <你的管理Token>" -H 'Content-Type:
   -d '{"module_id":"acme","config":{}}' http://localhost:8901/api/modules/install
 # 实测输出：{"detail":"字段「DNS 提供商」为必填项"}   (HTTP 400)
 
-# 3. compose 语法断言（无凭据文件时失败——缺陷 L 实证）
+# 3. compose 语法断言（历史实测：无凭据文件时失败——缺陷 L 实证；BUG-4 修复后经 configure_network 流程该文件会自动创建，正常流程不再触发此错）
 sg docker -c "docker compose -f <PROJECT_ROOT>/modules/acme/docker-compose.yml config"
-# 实测输出：env file /easyserver_data/modules/acme/dns-credentials.env not found
+# 历史实测输出：env file /easyserver_data/modules/acme/dns-credentials.env not found
 ```
 
 **凭据齐备后的验证路径（未实测，按上游文档描述）**：安装成功后容器执行 acme.sh 签发流程；证书产物落盘 `<DATA_DIR>/acme/data/`；日志可见 Let's Encrypt 验证与签发记录。真实签发涉及限额风险，请自行评估后操作。
@@ -110,10 +111,10 @@ sg docker -c "docker compose -f <PROJECT_ROOT>/modules/acme/docker-compose.yml c
 可以在全局设置中切换，切换后需重新填写对应服务商的 API 凭证（module.yaml faq）。
 
 **Q：镜像拉取失败（denied）怎么办？**
-实测已知问题：`neilpang/acme.sh:v3.0.9` 拉取被拒（非网络超时）。可尝试改用其他可用 tag 或配置可用镜像源；QA 报告建议文档注明备用镜像源。
+历史记录：旧 tag `neilpang/acme.sh:v3.0.9` 拉取被拒（非网络超时）。**BUG-7 修复（commit `e302c3f`）后 compose 已改用 `latest` tag**，实测可正常拉取启动。若你用的是修复前版本，升级或在 `modules/acme/docker-compose.yml` 中把 tag 改为 `latest`。
 
 **Q：compose config 报 dns-credentials.env not found？**
-凭据文件的硬依赖所致（缺陷 L）：凭据由面板安装流程生成；手动排查时确认模块目录下是否存在该文件。无凭据时 `config`/`validate` 均失败属实测确认的行为。
+凭据文件的硬依赖所致（缺陷 L）。**BUG-4 修复（commit `d5e321a`）后，`configure_network`（domain/hybrid 模式）启动 acme 前会自动创建该文件**（无凭据时为空文件），正常流程不再遇到此错。若绕过引擎手动执行 compose 命令碰到该错，确认模块目录下是否存在该文件，没有则 `touch` 一个空文件即可。
 
 ## 9. 实测排错
 
