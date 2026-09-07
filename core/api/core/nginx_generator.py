@@ -162,6 +162,7 @@ class NginxGenerator:
         self._generate_default_conf(config)
         self._generate_sites_conf(config, modules)
         self._copy_ssl_params()
+        self._copy_websocket_map()
 
     def _generate_default_conf(self, config: dict):
         env = self._get_jinja_env()
@@ -215,6 +216,16 @@ class NginxGenerator:
     def _copy_ssl_params(self):
         src = self._resolve_template_file("ssl-params.conf")
         dst = self.conf_dir / "ssl-params.conf"
+        if src and src.exists():
+            with open(src, "r") as f:
+                content = f.read()
+            with open(dst, "w") as f:
+                f.write(content)
+
+    def _copy_websocket_map(self):
+        """BUG-3 fix: 部署 WebSocket map 变量定义到 conf.d/"""
+        src = self._resolve_template_file("websocket-map.conf")
+        dst = self.conf_dir / "websocket-map.conf"
         if src and src.exists():
             with open(src, "r") as f:
                 content = f.read()
