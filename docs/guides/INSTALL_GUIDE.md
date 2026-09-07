@@ -333,6 +333,8 @@ docker compose start   # 或 docker compose up -d
 | 数据都在哪 | 模块数据在宿主 `.env` 的 `DATA_DIR` 指向目录（如 `/data`），模块定义在 `PROJECT_ROOT` 指向目录（如 `/easyserver_data`）。**备份这两个目录 = 备份全部** |
 | 面板配置在哪 | 命名卷 `easyserver-app-data`（`docker volume ls` 可见）；`/app/.env` 例外不持久化，容器重建后模块端口记录会丢（重装对应模块即可找回） |
 
+> **下一步——让服务被域名访问**：装好模块、能本地访问后，若想用「域名 + HTTPS」从外网访问（如 `https://panel.<你的域名>:8443/`），请接着看[网络配置指南](NETWORK_CONFIG_GUIDE.md)。它会带你装 nginx 反代模块、一键生成 SSL 证书（无需手动步骤）、配置 DNS 解析与子域名映射，并逐模块给出域名访问的排错方法。
+
 ---
 
 ## 验证清单
