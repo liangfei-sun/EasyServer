@@ -4,6 +4,8 @@
 
 本指南的每条链路断言（200/301/303/444）与排错方法都来自 WSL2 mirrored 网络下的真实实测（自签证书 + /etc/hosts 域名场景）。没有真实域名和 DNS 凭据也能完整走通本教程。
 
+> **2026-09-07 更新**：域名反代链路的一批缺陷已修复（QA 报告 R37/R38）：SSL 证书自动生成（BUG-2）、WebSocket 反代支持（BUG-3）、代理超时内置（BUG-5）、acme 凭据文件自动创建（BUG-4）、acme 镜像 tag（BUG-7）。本篇新增：子域名映射表、DnShe DNS 配置、SSL 证书选项、已知限制四个章节。
+
 ---
 
 ## 开始前：你需要什么
@@ -87,14 +89,14 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18000   # 已装模块
 | `NGINX_NETWORK_MODE` | `host` | 默认值，保持 |
 | `SSL_EMAIL` | 你的邮箱 | 证书通知邮箱 |
 
-- **你会看到**：安装四阶段通过，`docker ps` 里 `easyserver-nginx` 为 Up（host 模式无端口映射列，属正常）。引擎同时自动签发**自签证书**：`/easyserver_data/modules/nginx/ssl/<你的域名>/` 下生成 `fullchain.cer` 与 `test.local.key`（实测 1354B/1704B，权限 600）。
+- **你会看到**：安装四阶段通过，`docker ps` 里 `easyserver-nginx` 为 Up（host 模式无端口映射列，属正常）。**SSL 证书无需任何手动步骤**：执行网络配置（`configure_network`，domain/hybrid 模式）时，引擎在启动 nginx 前自动检查并生成自签名证书（BUG-2 修复，commit `94ef4ef`）——`/easyserver_data/modules/nginx/ssl/<你的域名>/` 下生成 `fullchain.cer` 与 `<域名>.key`（含 SAN 通配符 `*.<域名>`，有效期 365 天；实测 1168B/1704B，权限 600）。证书已存在时不覆盖（acme 签发的正式证书不会被自签替换）。
 - **截图**：无（安装页形态见安装指南第 5 步描述）。
 - **排错**：
 
 | 现象/报错 | 原因 | 解法 |
 |---|---|---|
-| 安装"成功"但容器反复重启（实测缺陷 AF） | 生成的配置 `listen 80`，host 模式绑 80 撞 Windows 占用；健康门控存在瞬时存活窗口，极少数情况误报 success | 按下方 4b 改 http_port 后重启容器 |
-| 安装失败，stage=health，error 含 `cannot load certificate` | 证书路径缺失（健康门控报真因） | 检查 ssl 目录是否生成；删掉残留的错误 conf 后重装 |
+| 安装“成功”但容器反复重启（实测缺陷 AF） | 生成的配置监听端口被撞（Windows 占用常见）；健康门控存在瞬时存活窗口，极少数情况误报 success | 按下方 6.2 改 http_port 后重启容器 |
+| 安装失败，stage=health，error 含 `cannot load certificate` | 历史缺陷，**BUG-2 修复后应自动处理**（执行网络配置时自动生成自签证书） | 若仍出现属引擎 bug：看引擎日志「自签名 SSL 证书」条目，确认 ssl 目录权限；详见[nginx 模块指南第 9 节](modules/nginx.md) |
 
 ### 4b. 生成反代配置（把模块挂到域名上）
 
@@ -106,7 +108,9 @@ TOKEN=$(curl -s -X POST http://localhost:8901/api/config/auth/login \
 curl -s -X POST http://localhost:8901/api/nginx/config/generate -H "Authorization: Bearer $TOKEN"
 ```
 
-- **你会看到**：生成两份配置——`default.conf`（HTTP 兜底：未知域名直接关闭连接，实测 444 行为）与 `sites.conf`（每个已安装模块一个 server 块，含 HTTPS 证书路径与反代目标端口）。nginx 容器随生成自动加载。
+- **你会看到**：生成两份配置——`default.conf`（HTTP 兜底：未知域名直接关闭连接，实测 444 行为）与 `sites.conf`（每个已安装模块一个 server 块，含 HTTPS 证书路径与反代目标端口）。nginx 容器随生成自动加载。修复后的模板还自动包含（无需手动添加）：
+  - **WebSocket 升级头**（BUG-3 修复，commit `292206f`）：`proxy_http_version 1.1` + `Upgrade`/`Connection` 头，uptime-kuma 实时通知、nextcloud 推送等 WebSocket 场景可直接通过反代；`$connection_upgrade` map 变量由 `websocket-map.conf` 提供，随生成自动部署到 `conf.d/`
+  - **代理超时**（BUG-5 修复，commit `e781d29`）：`proxy_connect_timeout 60s` / `proxy_send_timeout 300s` / `proxy_read_timeout 300s`，大文件上传与长连接不再被截断，且模块安装/卸载触发的配置重新生成不会再丢失这些设置
 - **截图**：无。
 - **排错**：见第 6 步（端口来源解析是重点）。
 
@@ -155,6 +159,92 @@ curl -s  -o /dev/null -w '%{http_code}\n' http://whatever.test.local:8080/ # 未
 |---|---|---|
 | acme/cloudflare 安装后功能验证 BLOCKED | 凭据为空（实测口径） | 配置凭据后重试；无凭据时仅生命周期可测属预期 |
 | 自签证书日志出现 `ssl_stapling ignored` 警告 | 自签证书无签发者（OCSP staple 不适用） | **预期噪音，可忽略**（实测确认非致命） |
+
+> 修复后续（BUG-4，commit `d5e321a`）：选择 domain/hybrid 模式时，引擎在启动 acme 模块前会自动创建 `modules/acme/dns-credentials.env`（无凭据时为空文件），不再因文件缺失导致 acme 启动失败。BUG-7（commit `e302c3f`）：acme 镜像 tag 已从被 registry 拒绝的 `v3.0.9` 改为 `latest`，实测可正常拉取启动。
+
+---
+
+## 第 5.1 步：子域名映射表（哪个子域名通向哪个模块）
+
+域名反代模式下，引擎按各模块 `module.yaml` 的 `subdomain` 字段自动生成子域名路由（仅已安装模块，BUG-1 修复后不再为未安装模块生成空路由）：
+
+| 子域名 | 模块 | 默认后端端口 | 说明 |
+|---|---|---|---|
+| `panel.<域名>` | 管理面板（easyserver-core） | 8900 | 三级回退：`PANEL_PORT` 环境变量 → `panel_port` 配置 → 8900 |
+| `notes.<域名>` | notediscovery | 8000 | 笔记发现服务 |
+| `files.<域名>` | filebrowser | 8081 | 网页文件浏览器 |
+| `joplin.<域名>` | joplin | 22300 | 笔记同步（域名访问需额外配置，见 6.4） |
+| `cloud.<域名>` | nextcloud | 8888 | 私有云盘（需登记 trusted_domains，见 6.5） |
+| `media.<域名>` | jellyfin | 8096 | 媒体服务器 |
+| `books.<域名>` | calibre-web | 8083 | 电子书管理 |
+| `status.<域名>` | uptime-kuma | 3001 | 服务监控（WebSocket 实时通知已由模板支持） |
+| `frigate.<域名>` | frigate | 5000 | AI 视频监控（NVR） |
+
+- **操作**：安装对应模块后无需手动配置，引擎自动重新生成 `sites.conf` 并热加载（实测：安装 uptime-kuma 后 `status.<域名>` server 块自动出现，卸载后自动移除）。
+- **验证**：`curl -sk -o /dev/null -w '%{http_code}\n' https://<子域名>.<域名>:8443/`，已安装且运行中的模块应返回 200/303 等业务状态码。
+- **注意**：后端端口以你**安装时实际填写的端口**为准（运行时优先解析，见 6.1），表中为模块默认值。
+
+---
+
+## 第 5.2 步：真实域名 DNS 配置（以 DnShe 为例）
+
+域名反代要生效，需在你的 DNS 服务商处添加解析记录。推荐一条**通配符记录**覆盖全部子域名：`*.<域名>` AAAA → 你的公网 IPv6（或 A → 公网 IPv4）。引擎预置的 DNS 提供商（aliyun/cloudflare/dnspod/huaweicloud/godaddy/he）不含 DnShe，DnShe 用户按本节手动配置（已知限制，见第 5.4 步）。
+
+### 方式一：DnShe 控制台（推荐新手）
+
+- **操作**：登录 DnShe → 域名管理 → 选择你的子域名（如 `lftest.de5.net`）→ DNS 解析 → 添加记录：类型 `AAAA`、主机记录 `*`、记录值填你的公网 IPv6、TTL 600。
+- **你会看到**：记录列表出现 `*.lftest.de5.net AAAA 2409:xxxx::xxxx`。
+
+### 方式二：DnShe OpenAPI（可自动化）
+
+- **操作**（API Key/Secret 在 DnShe 控制台获取；Base URL 以你账户页显示为准，示例为 `https://api005.dnshe.com`）：
+
+```bash
+curl -s -X POST 'https://api005.dnshe.com/index.php?m=domain_hub&endpoint=dns_records&action=create' \
+  -H 'X-API-Key: <你的 API Key>' \
+  -H 'X-API-Secret: <你的 API Secret>' \
+  -H 'Content-Type: application/json' \
+  -d '{"subdomain_id": <子域名数字ID>, "type": "AAAA", "name": "*", "content": "<你的公网IPv6>", "ttl": 600}'
+```
+
+- `subdomain_id` 在 DnShe 控制台或 API 查询获取；`name` 填 `*` 即创建通配符记录。
+- **验证解析生效**：
+
+```bash
+dig @223.5.5.5 panel.<你的域名> AAAA +short   # 应返回你填的 IPv6
+```
+
+- **排错**：
+
+| 现象/报错 | 原因 | 解法 |
+|---|---|---|
+| dig 查不到记录 | TTL 未过期或运营商 DNS 缓存 | 换公共 DNS（223.5.5.5 / 2400:3200::1）再查；等待数分钟 |
+| 解析通但访问不通 | 入站防火墙未放行 8080/8443 | Windows 管理员 PowerShell：`New-NetFirewallRule -DisplayName 'EasyServer-HTTPS-8443' -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Any`（8080 同理） |
+| DnShe API 返回鉴权失败 | Key/Secret 错误或未开通 Domain Hub API 权限 | 控制台确认凭据与 API 开通状态 |
+
+---
+
+## 第 5.3 步：SSL 证书三选一
+
+| 选项 | 获取方式 | 浏览器体验 | 适用场景 |
+|---|---|---|---|
+| ① 自签名（默认，全自动） | 引擎在 `configure_network` 时自动生成（BUG-2 修复），无需任何操作 | ⚠️ 有“不安全”警告，需手动继续 | 本地测试、/etc/hosts 验证、内网使用 |
+| ② Let's Encrypt（acme 模块） | DNS-01 验证：需 DNS 服务商 API 凭据（面板填入）；支持通配符 `*.<域名>` | ✅ 无警告，自动续签（约 60 天周期） | 真实公网域名，推荐 |
+| ③ 手动购买/导入 | 从证书商下载后放入 `<PROJECT_ROOT>/modules/nginx/ssl/<域名>/`：证书命名 `fullchain.cer`、私钥命名 `<域名>.key`，重载 nginx | ✅ 无警告，到期需手动更换 | DNS 服务商无 API、或已有付费证书 |
+
+- **选项②注意**：引擎默认 `http_port=8080`，**HTTP-01 验证（要求 80 端口）不可用**，请选 DNS 验证方式（acme 模块即 DNS 验证）；预置提供商不含 DnShe 时选 custom 并手动填写 acme.sh 插件名与凭据变量。
+- **选项③注意**：引擎只在证书**不存在**时生成自签证书，已存在的文件不会被覆盖——导入正式证书后重新 `configure_network` 不会被自签替换。
+
+---
+
+## 第 5.4 步：已知限制（知悉即可，不影响主链路）
+
+| 限制 | 说明 | 应对 |
+|---|---|---|
+| HTTP 端口非标准（`http_port=8080`） | **设计决策非缺陷**（R37 BUG-3 结论）：规避国内运营商对住宅宽带 80/443 的封锁 | 浏览器访问带端口号；ACME 走 DNS-01 验证 |
+| DnShe 不在预置 DNS 提供商列表 | 预置仅 aliyun/cloudflare/dnspod/huaweicloud/godaddy/he/custom | DNS 记录按第 5.2 步手动配置；acme 选 custom 填 acme.sh 插件参数 |
+| HTTPS 侧未知域名无兜底（缺陷 AE） | HTTP 侧未知域名被 444 关闭；HTTPS 侧未知 SNI 落入第一个 server 块（面板）返回 200 | 安全敏感场景注意；见 6.6 |
+| 模块端口记录易失（缺陷 AD） | 引擎容器重建后端口记录丢失，反代回退默认端口 | 见 6.1 排查法，重装对应模块 |
 
 ---
 
@@ -245,11 +335,12 @@ HTTP 侧未知域名会被 444 兜底关闭；**HTTPS 侧暂无兜底**，未知
 
 - [ ] 能说清四种访问模式的区别，并知道自己在用哪种
 - [ ] `curl http://127.0.0.1:8901/api/health` 返回 ok（本机链路）
-- [ ] nginx 模块安装成功且稳定运行（非 Restarting）
+- [ ] nginx 模块安装成功且稳定运行（非 Restarting），SSL 证书由引擎自动生成（无需手动步骤）
 - [ ] `https://panel.test.local:8443/` 浏览器可访问（自签警告可继续）
 - [ ] HTTP 未知域名连接被关闭（444 兜底生效）
 - [ ] 三处端口比对（/app/.env、sites.conf、docker ps）一致
 - [ ] 知道 80 被占改 http_port 的文件路径与 regenerate 命令
+- [ ] 知道自己常用模块对应的子域名（第 5.1 步映射表）；真实域名用户已配好通配符解析（第 5.2 步）并选定证书方案（第 5.3 步）
 
 ## 完成后你可以……
 
