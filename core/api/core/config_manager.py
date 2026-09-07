@@ -2,6 +2,7 @@
 EasyServer Config Manager
 """
 import os
+import re
 import yaml
 import secrets
 import shutil
@@ -11,7 +12,7 @@ import tempfile
 import bcrypt
 from pathlib import Path
 from typing import Any, Optional
-from dotenv import dotenv_values, set_key
+from dotenv import dotenv_values
 
 
 class ConfigManager:
@@ -131,16 +132,70 @@ class ConfigManager:
         return env
 
     def set_env_value(self, key: str, value: str):
+        """设置 .env 键值对（BUG-6 fix: 同目录原子写入，避免 null bytes 污染）
+
+        python-dotenv 的 set_key 使用 tempfile + shutil.move 跨文件系统移动，
+        在 Docker overlay2 环境下可能导致文件被 null bytes 填充。
+        此实现改为同目录临时文件 + os.replace 原子替换，彻底消除此问题。
+        """
         if not self.env_file.exists():
             example = self.project_root / ".env.example"
             if example.exists():
                 shutil.copy(str(example), str(self.env_file))
             else:
                 self.env_file.touch()
-        set_key(str(self.env_file), key, value)
+        self._atomic_set_key(str(self.env_file), key, value)
         # 清除缓存
         self._env_cache = None
         self._env_mtime = 0
+
+    @staticmethod
+    def _atomic_set_key(file_path: str, key: str, value: str):
+        """原子写入 .env 键值对
+
+        1. 读取全部内容
+        2. 查找并替换目标 key（或追加）
+        3. 写入同目录临时文件
+        4. os.replace 原子替换（POSIX 保证同文件系统原子性）
+        """
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # 匹配 KEY=... 或 export KEY=... 行（跳过注释行）
+        pattern = re.compile(
+            rf'^\s*(?:export\s+)?{re.escape(key)}\s*='
+        )
+        quoted_value = "'{}'".format(value.replace("'", "\\'"))
+        new_line = f"{key}={quoted_value}\n"
+
+        found = False
+        new_lines = []
+        for line in lines:
+            if pattern.match(line):
+                new_lines.append(new_line)
+                found = True
+            else:
+                new_lines.append(line)
+
+        if not found:
+            # 确保文件末尾有换行再追加
+            if new_lines and not new_lines[-1].endswith('\n'):
+                new_lines[-1] += '\n'
+            new_lines.append(new_line)
+
+        # 同目录临时文件 + os.replace 原子替换
+        dir_name = os.path.dirname(os.path.abspath(file_path))
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix='.env_', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='') as f:
+                f.writelines(new_lines)
+            os.replace(tmp_path, file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def get_env_value(self, key: str, default: str = "") -> str:
         return self.load_env().get(key, default)
