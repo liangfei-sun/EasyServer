@@ -5,8 +5,9 @@ EasyServer Modules API
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from ..core.deps import MODULES_DIR, MODULES_TEMPLATE_DIR, get_config_manager, get_docker_manager, get_module_loader
+from ..core.deps import DATA_DIR, MODULES_DIR, MODULES_TEMPLATE_DIR, get_config_manager, get_docker_manager, get_module_loader
 from ..core.config_manager import ConfigManager
+from ..core.constants import SYSTEM_MODULE_IDS, expand_data_dir_placeholder, host_data_dir
 from ..core.docker_manager import DockerManager
 from ..core.module_loader import ModuleLoader
 import asyncio
@@ -76,6 +77,35 @@ def _fill_auto_generate_config(metadata: dict, config: dict):
         value = config.get(key)
         if value is None or str(value).strip() == "":
             config[key] = ConfigManager.generate_password()
+
+
+def _expand_config_placeholders(config: dict) -> dict:
+    """M2：安装写值前展开配置中的 ${DATA_DIR} 占位符（仅 DATA_DIR，不动其它变量）
+
+    前端 Market.vue 用 module.yaml 的 config.default 预填（如 filebrowser 的
+    `${DATA_DIR}/filebrowser/files`）并原样提交。docker compose 的变量插值是
+    单趟不递归的（参 DockerManager._expand_env_value）：一旦该键已在 .env 被设值，
+    `:-` 默认分支就不再触发，值内部的 ${DATA_DIR} 也不会被二次展开 → 卷源退化为
+    含花括号的字面量相对路径，daemon 会创建名为 `${DATA_DIR}` 的畸形目录，
+    新装实例数据落错位置且卸载删数据命不中（孤儿数据）。
+
+    因此落盘前统一展开为「宿主视角」的 DATA_DIR 绝对路径（DATA_DIR_HOST 优先，
+    与 compose 子进程、_runtime_data_roots 看到的同一个值），保证：
+      - compose up 的卷源是宿主绝对路径；
+      - prepare_data_dirs 能把该路径归入运行时数据根并预创建/chown；
+      - 卸载时 resolve_module_data_paths 能映射回 /data/<module> 并命中删除。
+    只处理本次安装提交的配置值，不重写 .env 中其它模块已持久化的值。
+    """
+    data_dir = host_data_dir(DATA_DIR)
+    expanded = {}
+    for key, value in config.items():
+        new_value = expand_data_dir_placeholder(value, data_dir)
+        if isinstance(new_value, str) and new_value != value:
+            logger.info(
+                "安装配置占位符展开: %s: %r -> %r", key, value, new_value
+            )
+        expanded[key] = new_value
+    return expanded
 
 
 async def _remove_started_containers(dm: DockerManager, module_id: str, task: dict):
@@ -247,6 +277,16 @@ async def install_module(request: InstallRequest):
     dm = _get_docker_manager()
 
     module_id = request.module_id
+
+    # M3：系统组件服务端守卫（与前端 Market.vue 的 SYSTEM_MODULE_IDS 同源）。
+    # 前端隐藏按钮不能阻止直接 curl；nginx/acme/cloudflare-tunnel 由网络配置流程
+    # 自动启停，从应用商店安装/卸载会把面板自身打挂。
+    if module_id in SYSTEM_MODULE_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"模块 {module_id} 为系统组件，由网络配置流程自动管理，禁止从应用商店安装"
+        )
+
     metadata = ml.get_module_by_id(module_id)
     if not metadata:
         raise HTTPException(status_code=404, detail=f"模块 {module_id} 不存在")
@@ -275,6 +315,10 @@ async def install_module(request: InstallRequest):
     config = dict(request.config)
     _validate_required_config(metadata, config)
     _fill_auto_generate_config(metadata, config)
+    # M2：${DATA_DIR} 占位符展开为宿主绝对路径后再落盘，避免 compose 单趟插值
+    # 下卷源退化成字面量路径（同一份展开后的 config 也传给后台安装任务，
+    # 保证模板渲染/预创建目录与实际 compose 使用的值一致）
+    config = _expand_config_placeholders(config)
 
     # 写入用户配置到 .env
     for key, value in config.items():
@@ -320,6 +364,15 @@ async def uninstall_module(module_id: str, request: UninstallRequest):
     cm = _get_config_manager()
     dm = _get_docker_manager()
     ml = _get_module_loader()
+
+    # M3：系统组件服务端守卫（与安装入口同一白名单）。cloudflare-tunnel 由
+    # routes/network.py 切换 access_mode 时自动启停，nginx/acme 是反代与证书基础
+    # 设施；经本接口卸载会直接让面板失联，故服务端硬拒绝。
+    if module_id in SYSTEM_MODULE_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"模块 {module_id} 为系统组件，由网络配置流程自动管理，禁止从应用商店卸载"
+        )
 
     # 防御性硬依赖检查（其他已安装模块依赖本模块时拒绝卸载）
     for mid in cm.get_installed_modules():

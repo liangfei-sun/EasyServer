@@ -64,3 +64,5 @@ modules/backup/data/
 **/.tmp/
 **/tmp/
 core/web/node_modules_old/
+_recovery_*/
+data.bak.*/

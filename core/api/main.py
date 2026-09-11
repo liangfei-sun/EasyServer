@@ -34,8 +34,8 @@ if _cors_origins_str:
 else:
     # 尝试从 config.yaml 读取域名，容错处理（setup 阶段可能不存在）
     try:
-        from .core.config_manager import ConfigManager
-        _cm = ConfigManager(os.environ.get("EASYSERVER_ROOT", "/app"))
+        from .core.deps import get_config_manager
+        _cm = get_config_manager()
         _cfg = _cm.load_config()
 
         # 收集所有已知域名

@@ -18,12 +18,17 @@
         <el-descriptions-item label="访问方式">{{ accessModeLabel }}</el-descriptions-item>
         <el-descriptions-item label="域名">{{ domain || '未设置' }}</el-descriptions-item>
         <el-descriptions-item v-if="currentMode === 'cloudflare_tunnel' || currentMode === 'hybrid'" label="隧道状态">
-          <el-tag :type="tunnelStatus.connected ? 'success' : 'danger'" size="small">
+          <!-- 加载中：/cloudflare/status 未返回前显示占位，避免首屏误显“未连接” -->
+          <el-tag v-if="tunnelError" type="warning" size="small">获取失败</el-tag>
+          <el-tag v-else-if="tunnelLoading || !tunnelLoaded" type="info" size="small">加载中…</el-tag>
+          <el-tag v-else :type="tunnelStatus.connected ? 'success' : 'danger'" size="small">
             {{ tunnelStatus.connected ? '已连接' : '未连接' }}
           </el-tag>
         </el-descriptions-item>
         <el-descriptions-item v-if="currentMode === 'cloudflare_tunnel' || currentMode === 'hybrid'" label="Tunnel 中转服务">
-          {{ tunnelStatus.routes?.length || 0 }} 个
+          <span v-if="tunnelError" style="color:#909399">—</span>
+          <span v-else-if="tunnelLoading || !tunnelLoaded" style="color:#909399">加载中…</span>
+          <span v-else>{{ tunnelStatus.routes?.length || 0 }} 个</span>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -334,6 +339,10 @@ const openDomainSetup = () => {
 // ===== Tunnel 状态 =====
 const tunnelStatus = ref({ configured: false, connected: false, routes: [], services: [] })
 const tunnelLoading = ref(false)
+// tunnelLoaded：/cloudflare/status 成功返回后才为 true，用于区分“加载中”与真实“未连接”
+const tunnelLoaded = ref(false)
+// tunnelError：接口失败时为 true，回退显示“获取失败”而非误显正常/故障
+const tunnelError = ref(false)
 
 const statusConnected = computed(() => {
   if (currentMode.value === 'cloudflare_tunnel') return tunnelStatus.value.connected
@@ -418,11 +427,15 @@ const loadConfig = async () => {
 
 const loadTunnelStatus = async () => {
   tunnelLoading.value = true
+  tunnelError.value = false
   try {
     const { data } = await api.get('/cloudflare/status')
     tunnelStatus.value = data
+    tunnelLoaded.value = true
   } catch (e) {
-    // Tunnel 未配置时忽略错误
+    // 接口失败（后端异常等）：标记错误态，避免用默认值误显“未连接/0 个”
+    tunnelLoaded.value = false
+    tunnelError.value = true
   } finally {
     tunnelLoading.value = false
   }

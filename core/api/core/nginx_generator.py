@@ -44,12 +44,15 @@ class NginxGenerator:
     def _load_env_dict(self) -> dict:
         """读取引擎 .env（运行时端口来源，F5）
 
-        候选顺序：EASYSERVER_ROOT/.env（与 ConfigManager 同源，容器内 /app/.env）
-        → modules_dir.parent/.env；首个存在的常规文件生效。
+        候选顺序：deps.DATA_DIR/.env（持久卷，与 ConfigManager/docker_manager 同源，
+        容器内 /data/.env；deps.DATA_DIR 已含 {PROJECT_ROOT}/data 回退）
+        → EASYSERVER_ROOT/.env（旧布局）→ modules_dir.parent/.env；首个存在的常规文件生效。
         （modules_dir.parent 可能被单文件挂载陷阱变为目录，不可用。）
         """
         env = {}
-        candidates = []
+        # 惰性导入 deps统一常量，保证三个消费者（ConfigManager/docker_manager/nginx_generator）口径一致
+        from .deps import DATA_DIR
+        candidates = [Path(DATA_DIR) / ".env"]
         root = os.environ.get("EASYSERVER_ROOT", "")
         if root:
             candidates.append(Path(root) / ".env")

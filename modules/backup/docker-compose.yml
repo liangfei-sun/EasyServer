@@ -8,15 +8,31 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
-      - RESTIC_REPOSITORY=/backups/restic-repo
+      # 仓库路径已由 restic-repo 改为 restic-repo-v2：旧库 data/backups/restic-repo（8.9G，
+      # 2026-07-30~08-02 的 15 个快照）因加密密码永久丢失已不可解密，按只读遗留存证原样保留，
+      # 绝不复用其路径，避免新库写入或清理操作波及旧库。容器内 /backups/restic-repo-v2
+      # 经下方 `${DATA_DIR}/backups:/backups` 挂载 ↔ 宿主 <DATA_DIR>/backups/restic-repo-v2。
+      - RESTIC_REPOSITORY=/backups/restic-repo-v2
       - RESTIC_PASSWORD=${BACKUP_PASSWORD:?BACKUP_PASSWORD must be set}
       - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
       - BACKUP_RETAIN_DAYS=${BACKUP_RETAIN_DAYS:-7}
       - BACKUP_CLOUD_PROVIDER=${BACKUP_CLOUD_PROVIDER:-none}
+      # =1 时跳过容器启动那一刻的首次备份，只启动调度器（用于排障/避免启动即写仓库）
+      - SKIP_INITIAL_BACKUP=${SKIP_INITIAL_BACKUP:-0}
+      # =1 时才执行 restic prune（永久删除数据，不可逆）；默认关闭，forget 与 prune 已分离
+      - BACKUP_PRUNE_ENABLED=${BACKUP_PRUNE_ENABLED:-0}
     volumes:
       - ${DATA_DIR}:/data:ro
       - ${DATA_DIR}/backups:/backups
-      - ${PROJECT_ROOT}/.env:/config/.env:ro
+      # 权威 .env 挂载（勿回退为 ${PROJECT_ROOT}/.env）：运行时 .env 的写入目标是持久卷
+      # DATA_DIR/.env —— ConfigManager.env_file = data_dir/.env（core/api/core/config_manager.py），
+      # docker_manager._get_env_file 亦优先 data_dir/.env、仅在缺失时回退 project_root/.env。
+      # 故 UI 的所有配置变更（端口 / Tunnel Token / BACKUP_PASSWORD / JWT_SECRET）只落 DATA_DIR/.env；
+      # 若仍挂 legacy 项目根 .env，restic 快照进的是陈旧副本，灾备恢复会还原出过期配置，
+      # 极端情况下（BACKUP_PASSWORD 变更过）恢复出的密码无法解密 v2 仓库，形成恢复路径自我锁死。
+      # 插值同源依据：与上一行 `${DATA_DIR}:/data:ro`、`${DATA_DIR}/backups:/backups` 使用同一
+      # ${DATA_DIR} 变量、同一 compose 上下文（core 注入 DATA_DIR_HOST 覆盖为宿主绝对路径）。
+      - ${DATA_DIR}/.env:/config/.env:ro
       - ${PROJECT_ROOT}/modules/backup/scripts:/scripts:ro
     security_opt:
       - no-new-privileges:true

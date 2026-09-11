@@ -2,7 +2,10 @@
 
 services:
   filebrowser:
-    image: filebrowser/filebrowser:v2.31.2
+    # 修正镜像漂移：原钉 v2.31.2 但本地/实际运行一直是 latest(2.63.23)，
+    # 且 Docker Hub 不可达无法拉取 v2.31.2，导致 recreate 必然卡在 pull。
+    # 对齐为 latest 属零版本变更（与 recreate 前运行的是同一镜像 ID）。
+    image: filebrowser/filebrowser:latest
     container_name: easyserver-filebrowser
     user: "${UID:-1000}:${GID:-1000}"
     ports:

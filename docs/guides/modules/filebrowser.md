@@ -6,9 +6,11 @@
 
 FileBrowser 是轻量级 Web 文件管理器，支持上传、下载、在线预览、分享链接与多用户管理，管理指定目录内的文件。
 
+> **镜像 tag 说明**：镜像 tag 已对齐为 `latest`，与 recreate 前实际运行镜像 ID 一致，属零版本变更（旧文档中的 `v2.31.2` 已废弃）。
+
 | 项 | 值 |
 |------|------|
-| 镜像 | `filebrowser/filebrowser:v2.31.2` |
+| 镜像 | `filebrowser/filebrowser:latest` |
 | 分类 | files |
 | 网络模式 | bridge（端口映射） |
 | 端口 | 宿主 `FILEBROWSER_PORT`（默认 8081）→ 容器 80 |
@@ -29,7 +31,7 @@ FileBrowser 是轻量级 Web 文件管理器，支持上传、下载、在线预
 | 字段 | 说明 | 默认值 | 必填 |
 |------|------|--------|:---:|
 | `FILEBROWSER_PORT` | 服务端口（宿主侧） | 8081 | 是 |
-| `FILEBROWSER_DATA_PATH` | 管理的文件目录 | `./data/filebrowser/files` | 是 |
+| `FILEBROWSER_DATA_PATH` | 管理的文件目录（宿主机绝对路径，相对路径会导致卷挂到错误位置） | `${DATA_DIR}/filebrowser/files` | 是 |
 
 ### 3.2 安装路径与实测行为
 
@@ -85,7 +87,7 @@ curl -s http://127.0.0.1:18081/health
 
 - 面板卸载或 `POST /api/modules/uninstall`；`remove_data: true` 时实测返回 `data_removed:true, removed_paths:["/app/data/filebrowser-db","/app/data/filebrowser"]`
 - **实测注意**：`removed_paths` 显示的是**容器内路径前缀**（`/app/data/...`），宿主真实路径为 `<DATA_DIR>/...`（缺陷 F）；且实测卸载后宿主两目录**仍残留**（属主已是 1000，可直接删除）（缺陷 G）
-- **实测警告（缺陷 D）**：卸载会**自动删除 `filebrowser/filebrowser:v2.31.2` 镜像**，重装需重新拉取
+- **实测警告（缺陷 D）**：卸载会**自动删除 `filebrowser/filebrowser:latest` 镜像**，重装需重新拉取
 
 ## 8. FAQ
 

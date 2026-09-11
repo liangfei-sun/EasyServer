@@ -20,7 +20,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core.deps import PROJECT_ROOT, get_config_manager
+from ..core.deps import DATA_DIR, get_config_manager
 from ..core.nginx_utils import async_regenerate_nginx_config
 from ..core.background_tasks import trigger_dns_sync_background
 
@@ -32,7 +32,8 @@ logger = logging.getLogger("easyserver.config_files")
 ALLOWED_FILES = {"config.yaml", ".env"}
 MAX_CONTENT_SIZE = 1 * 1024 * 1024  # 1MB
 
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+# config.yaml 与运行时 .env 均落在持久卷 DATA_DIR（容器内 /data），
+# 与 ConfigManager 同源；DATA_DIR 由 deps 统一解析（宿主开发模式回退 {PROJECT_ROOT}/data）。
 
 # admin_password_hash 脱敏提示
 _HASH_MASK_HINT = "***（通过界面密码修改功能更改）"
@@ -61,8 +62,8 @@ def _resolve_file_path(filename: str) -> str:
         raw_path = os.path.join(DATA_DIR, "config.yaml")
         allowed_dir = DATA_DIR
     else:
-        raw_path = os.path.join(PROJECT_ROOT, ".env")
-        allowed_dir = PROJECT_ROOT
+        raw_path = os.path.join(DATA_DIR, ".env")
+        allowed_dir = DATA_DIR
 
     # 规范化路径并校验前缀，防止符号链接等绕过
     resolved = os.path.realpath(raw_path)
@@ -360,6 +361,16 @@ async def write_config_file(filename: str, body: FileWriteRequest):
         if not _verify_write(filepath, old_mtime_ns, expected_content=content):
             _rollback_file(filepath, bak_path)
             raise HTTPException(status_code=500, detail="写入后校验失败，已自动回滚")
+
+        # M2/D5：编辑器直接原子写 .env，绕过 set_env_value；显式失效 ConfigManager
+        # 的 env 缓存，与「文件为唯一权威源」模型一致，避免读到旧值。
+        # （load_env 本身基于 mtime 自失效，此处为防御性显式清缓存。）
+        try:
+            _cm = get_config_manager()
+            _cm._env_cache = None
+            _cm._env_mtime = 0
+        except Exception:
+            pass
 
         logger.info(".env 文件已更新")
         return {"success": True, "warnings": []}

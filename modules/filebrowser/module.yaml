@@ -19,9 +19,9 @@ config:
   - key: FILEBROWSER_DATA_PATH
     label: "管理的文件目录"
     type: string
-    default: "./data/filebrowser/files"
+    default: "${DATA_DIR}/filebrowser/files"
     required: true
-    description: "FileBrowser 管理的文件目录路径"
+    description: "FileBrowser 管理的文件目录路径（须为宿主机绝对路径，相对路径会导致卷挂到错误位置）"
 
 access:
   subdomain: files
@@ -57,7 +57,7 @@ docs:
     - **命令行**：支持在 Web 界面执行命令（管理员）
 
     ### 管理的文件目录
-    默认管理 `data/filebrowser/files/` 目录，可在配置中修改。
+    默认管理 `${DATA_DIR}/filebrowser/files/` 目录（宿主机绝对路径，相对路径会导致卷挂到错误位置），可在配置中修改。
 
     ### 安全建议
     - 首次登录后立即修改默认密码

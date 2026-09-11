@@ -164,7 +164,7 @@ docker exec easyserver-nginx nginx -t
 
 EasyServer 提供内置备份中心，支持本地和云端备份：
 
-- **本地备份**：基于 restic 增量备份，存储在 `data/backups/restic-repo`
+- **本地备份**：基于 restic 增量备份，存储在 `data/backups/restic-repo-v2`（旧目录 `data/backups/restic-repo` 为加密密码丢失后的只读遗留，不再使用）
 - **云端备份**：支持阿里云 OSS、AWS S3、Backblaze B2
 - **自动备份**：可配置每日/每周/每月自动备份
 - **快照恢复**：任意历史快照一键恢复

@@ -16,11 +16,18 @@ from dotenv import dotenv_values
 
 
 class ConfigManager:
-    def __init__(self, project_root: str):
+    def __init__(self, project_root: str, data_dir: str = ""):
         self.project_root = Path(project_root)
-        self.data_dir = self.project_root / "data"
+        # 持久化数据目录（config.yaml / .env 落地位置）：
+        # - Docker 部署：由 deps.get_config_manager() 传入 DATA_DIR（持久卷 /data）
+        # - 未传入时回退 {project_root}/data（宿主开发模式）
+        self.data_dir = Path(data_dir) if data_dir else self.project_root / "data"
         self.config_file = self.data_dir / "config.yaml"
-        self.env_file = self.project_root / ".env"
+        # 运行时 .env 写入目标：与 config.yaml 同落持久卷，容器重建后不丢失（含 JWT_SECRET）
+        self.env_file = self.data_dir / ".env"
+        # 旧布局 .env（宿主/未设 DATA_DIR 模式的旧部署位于 {project_root}/.env），
+        # 仅作为读取回退候选，与 docker_manager._get_env_file 双候选口径对齐
+        self._env_file_legacy = self.project_root / ".env"
         # 内存缓存
         self._config_cache: Optional[dict] = None
         self._config_mtime: float = 0
@@ -116,17 +123,29 @@ class ConfigManager:
             }
         }
 
+    def _env_read_path(self) -> Optional[Path]:
+        """解析 .env 读取路径：优先持久卷 data_dir/.env，不存在则回退旧布局
+        {project_root}/.env（宿主开发模式）；均不存在返回 None。
+        与 docker_manager._get_env_file 的双候选顺序保持一致。
+        """
+        if self.env_file.is_file():
+            return self.env_file
+        if self._env_file_legacy.is_file():
+            return self._env_file_legacy
+        return None
+
     def load_env(self) -> dict:
-        if not self.env_file.exists():
+        read_path = self._env_read_path()
+        if read_path is None:
             return {}
         # 基于 mtime 的缓存
         try:
-            mtime = os.path.getmtime(str(self.env_file))
+            mtime = os.path.getmtime(str(read_path))
         except OSError:
             mtime = 0
         if self._env_cache is not None and mtime == self._env_mtime:
             return self._env_cache
-        env = dict(dotenv_values(str(self.env_file)))
+        env = dict(dotenv_values(str(read_path)))
         self._env_cache = env
         self._env_mtime = mtime
         return env
@@ -137,8 +156,16 @@ class ConfigManager:
         python-dotenv 的 set_key 使用 tempfile + shutil.move 跨文件系统移动，
         在 Docker overlay2 环境下可能导致文件被 null bytes 填充。
         此实现改为同目录临时文件 + os.replace 原子替换，彻底消除此问题。
+
+        写入目标固定为持久卷 data_dir/.env（唯一权威源）。
+        注意：不在此处 blanket 同步 os.environ —— 进程 env 会压制 compose
+        --env-file 的值，对以占位值初始化的存量模块（如 joplin-db）在
+        restart/update 时用新值认证旧库而静默失败（docker_manager C2 场景）。
+        确需进程内同步的键（如 JWT_SECRET）由 mark_setup_completed() 显式处理。
         """
         if not self.env_file.exists():
+            # 先确保 data_dir 存在，否则 copy/touch 会抛 FileNotFoundError
+            self._ensure_dirs()
             example = self.project_root / ".env.example"
             if example.exists():
                 shutil.copy(str(example), str(self.env_file))

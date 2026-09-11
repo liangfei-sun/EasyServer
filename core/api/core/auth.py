@@ -15,14 +15,25 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-# JWT 密钥（从环境变量读取，未设置则每次启动随机生成）
-_env_jwt_secret = os.environ.get("JWT_SECRET")
+# JWT 密钥解析顺序：
+# 1) 进程环境变量 JWT_SECRET（docker-compose env_file / environment 注入）
+# 2) 持久卷 .env（DATA_DIR/.env，mark_setup_completed 写入的位置）
+#    —— 容器重建后 os.environ 不再携带该值，必须从持久化 .env 恢复，
+#       否则每次重启随机化导致全员 Token 失效掉线。
+# 3) 均缺失时才随机生成（首次启动、setup 未完成场景）
+_env_jwt_secret = os.environ.get("JWT_SECRET", "")
+if not _env_jwt_secret:
+    try:
+        from .deps import get_config_manager
+        _env_jwt_secret = get_config_manager().get_env_value("JWT_SECRET", "")
+    except Exception:
+        _env_jwt_secret = ""
 if _env_jwt_secret:
     JWT_SECRET = _env_jwt_secret
 else:
     JWT_SECRET = secrets.token_hex(32)
-    logger.warning("JWT_SECRET 环境变量未设置，已使用随机密钥。"
-                   "重启后所有现有 Token 将失效，建议设置 JWT_SECRET 环境变量。")
+    logger.warning("JWT_SECRET 未设置（环境变量与持久化 .env 均缺失），已使用随机密钥。"
+                   "重启后所有现有 Token 将失效，建议完成 setup 以持久化 JWT_SECRET。")
 JWT_EXPIRE_SECONDS = 7 * 24 * 3600  # 7 天
 
 # 白名单路径：不需要鉴权
@@ -131,8 +142,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # 检查 setup 状态，未完成时返回 401（setup 路径已在上方放行）
         try:
-            from .config_manager import ConfigManager
-            cm = ConfigManager(os.environ.get("EASYSERVER_ROOT", "/app"))
+            from .deps import get_config_manager
+            cm = get_config_manager()
             if not cm.is_setup_completed():
                 return JSONResponse(
                     status_code=401,

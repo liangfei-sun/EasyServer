@@ -71,7 +71,7 @@ sudo docker ps --filter name=easyserver-backup    # 实测：Up
 
 # 引擎侧健康检查（module.yaml：file_exists /data/backups）
 ls -la <DATA_DIR>/backups/
-# 实测输出：restic-repo（drwx------ root root，700 权限）
+# 实测输出：restic-repo-v2（drwx------ root root，700 权限）；同目录下另有 restic-repo 为旧库只读遗留，见 §6 迁移说明
 
 # 首次备份快照验证（容器内 restic 命令）
 sg docker -c "docker exec easyserver-backup restic snapshots"
@@ -95,19 +95,22 @@ sudo docker logs easyserver-backup
 
 | 路径 | 内容 |
 |------|------|
-| `<DATA_DIR>/backups/restic-repo/` | restic 加密仓库（全部快照，700 root 属主） |
+| `<DATA_DIR>/backups/restic-repo-v2/` | **当前活跃** restic 加密仓库（全部快照，700 root 属主，`RESTIC_REPOSITORY=/backups/restic-repo-v2`） |
+| `<DATA_DIR>/backups/restic-repo/` | 旧加密仓库，原 `BACKUP_PASSWORD` 永久丢失后按**不可恢复**处置的**只读遗留存证**——不可解密、不再使用，勿写入、勿 `forget/prune`、勿复用其路径 |
+
+> **仓库迁移说明（2026-09）**：活跃仓库路径已由 `restic-repo` 迁移为 `restic-repo-v2`（见 `core/api/routes/backup.py`、`modules/backup/docker-compose.yml`），新库 init/backup/forget/prune 在物理上无法波及旧库。旧库 `<DATA_DIR>/backups/restic-repo` 原样保留、不删除、不覆盖，仅作为“万一将来找回原密码”的存证；若找回原密码，**必须先修好 `backup.sh` 的 forget/prune 逻辑再恢复访问**，否则首次启动即清空整库。本段与 `modules/backup/module.yaml` docs 段一致。
 
 本模块自身即备份设施，采用"元备份"视角管理：
 
-- **仓库目录就是全部备份产物**，恢复依赖 `BACKUP_PASSWORD`——密码与仓库需分开保管（密码丢失仓库作废）
-- 建议对 `restic-repo/` 做异地副本（rsync 到其他机器/磁盘），形成二级备份
+- **仓库目录就是全部备份产物**，恢复依赖 `BACKUP_PASSWORD`——密码与仓库需分开保管（密码丢失仓库作废，本机旧库即前车之鉴）
+- 建议对 `restic-repo-v2/` 做异地副本（rsync 到其他机器/磁盘），形成二级备份
 - 保留策略：按 `BACKUP_RETAIN_DAYS`（默认 7 天）自动清理过期快照，实测策略输出正常
 - 注意：仓库与被备份数据同盘（`<DATA_DIR>/backups`），磁盘级故障时两者同损，异地副本是唯一兜底
 
 ## 7. 卸载
 
 - 面板卸载或 `POST /api/modules/uninstall`；实测返回 `success` + `data_removed:true` + **`removed_paths:[]`**（缺陷 C 族：与 data_removed 语义矛盾）
-- **实测确认**：容器已删；`<DATA_DIR>/backups/restic-repo` **保留**（备份产物不被卸载删除——该场景下保留属合理语义，但引擎未如实返回 skipped_paths）
+- **实测确认**：容器已删；`<DATA_DIR>/backups/restic-repo-v2` **保留**（备份产物不被卸载删除——该场景下保留属合理语义，但引擎未如实返回 skipped_paths）
 - **实测警告（缺陷 D 第 4 例）**：卸载会**自动删除 `easyserver-backup:latest` 镜像**（本地 build 约 40s 的产物）——重装需重新 build（成本尚低，但需知晓）
 - 另注意（缺陷 Q）：卸载/停止/日志 API 按 id 直操作均可用，但 `GET /api/services` 列表**不含手动启动的 backup 容器**（installed_modules 过滤）——API 可见性语义不一致，属已知现象
 
@@ -143,9 +146,9 @@ error while interpolating services.backup.environment.[]: required variable BACK
 清理 7 天前的快照... keep 1 snapshots: ca6f2f7f ... Paths /config/.env /data
 === 备份完成: Thu Sep 3 17:06:07 UTC 2026 ===  定时备份间隔: 7200s
 # 产物
-$ ls -la /data/backups/ → restic-repo (drwx------ root root)
+$ ls -la /data/backups/ → restic-repo-v2 (drwx------ root root)；同目录另有旧 restic-repo（只读遗留，见 §6）
 $ docker exec easyserver-backup restic snapshots → ca6f2f7f 2026-09-03 17:06 /config/.env /data
 # uninstall
 {"success":true,...,"data_removed":true,"removed_paths":[]}
-$ docker ps -a → 无 backup 容器；docker images → easyserver-backup 已删；/data/backups/restic-repo 保留
+$ docker ps -a → 无 backup 容器；docker images → easyserver-backup 已删；/data/backups/restic-repo-v2 保留
 ```

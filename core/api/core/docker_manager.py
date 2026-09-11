@@ -63,13 +63,16 @@ class DockerManager:
                 return {"type": diag_type, "hint": hint}
         return {"type": "unknown", "hint": ""}
 
-    def __init__(self, project_root: str, modules_dir: str = ""):
+    def __init__(self, project_root: str, modules_dir: str = "", data_dir: str = ""):
         self.project_root = Path(project_root)
         # 模块工作目录：优先使用传入的 modules_dir，否则回退到 {project_root}/modules
         if modules_dir:
             self.modules_dir = Path(modules_dir)
         else:
             self.modules_dir = self.project_root / "modules"
+        # 数据持久化目录（运行时 .env 落地位置）：优先传入的 data_dir，
+        # 否则回退 {project_root}/data（宿主开发模式，行为与旧版一致）
+        self.data_dir = Path(data_dir) if data_dir else self.project_root / "data"
 
     def _get_compose_file(self, module_id: str) -> Path:
         compose_file = self.modules_dir / module_id / "docker-compose.yml"
@@ -78,9 +81,13 @@ class DockerManager:
         return compose_file
 
     def _get_env_file(self) -> Optional[Path]:
-        env_file = self.project_root / ".env"
-        # AA 附带防御：R29 曾出现 .env 为目录的陷阱，is_file 避免把目录传给 --env-file
-        return env_file if env_file.is_file() else None
+        # 运行时 .env 落在持久卷（DATA_DIR），与 ConfigManager 同源；
+        # 回退到 {project_root}/.env 兼容宿主开发模式旧布局。
+        for candidate in (self.data_dir / ".env", self.project_root / ".env"):
+            # AA 附带防御：R29 曾出现 .env 为目录的陷阱，is_file 避免把目录传给 --env-file
+            if candidate.is_file():
+                return candidate
+        return None
 
     @staticmethod
     def _read_env_file_keys(env_file: Path) -> set:
@@ -403,9 +410,12 @@ class DockerManager:
     def resolve_module_data_paths(self, module_id: str) -> list:
         """解析模块数据目录：docker-compose volumes 中挂载在数据区的路径
 
-        用于卸载时按用户选择删除数据。路径以代码运行时视角返回（容器内为
-        /app、/app/data，宿主开发环境为项目根目录）：.env 中的 PROJECT_ROOT
-        映射到 self.project_root，DATA_DIR 映射到 self.project_root/data。
+        用于卸载时按用户选择删除数据。路径以代码运行时视角返回：数据区
+        统一使用持久卷 self.data_dir（容器内 /data），而非镜像可写层
+        project_root/data，确保删除命中真实持久化数据、不产生孤儿目录。
+        .env 中的 PROJECT_ROOT 映射到 self.project_root，DATA_DIR 映射到 self.data_dir；
+        若值本身已是宿主绝对路径（DATA_DIR_HOST / PROJECT_ROOT_HOST 之下，如安装时
+        展开 ${DATA_DIR} 占位符后落盘的模块配置），则按 *_HOST 根映射回运行时路径。
         安全规则：
         - 仅接受 `${DATA_DIR}/<module_id>/` 下的路径（如 data/jellyfin/config）
         - 兼容 `data/<module_id>-xxx` 同级目录（如 data/filebrowser-db）
@@ -419,15 +429,40 @@ class DockerManager:
         project_root = self.project_root.resolve()
         # .env 中的宿主路径（compose 变量值），用于路径映射
         env_project = Path(env.get("PROJECT_ROOT", str(project_root))).expanduser().resolve()
-        env_data = Path(env.get("DATA_DIR", str(project_root / "data"))).expanduser().resolve()
+        env_data = Path(env.get("DATA_DIR", str(self.data_dir))).expanduser().resolve()
         module_dir = (self.modules_dir / module_id).resolve()
-        # 数据根目录（根 compose 将 ${DATA_DIR} 挂载到容器 /data，同时 ./data 挂载到 /app/data）
-        data_root = project_root / "data"
+        # 数据根目录：使用持久卷 self.data_dir（容器内 /data，与 _runtime_data_roots /
+        # _get_host_env_overrides 的 /data↔DATA_DIR_HOST 映射一致），而非镜像层
+        # project_root/data —— 否则卸载勾选“删除数据”删的是空的 /app/data/<module>，
+        # 真实持久化数据（/data/<module>）删不掉，产生孤儿数据。
+        data_root = self.data_dir.resolve()
         data_prefix = data_root / module_id
         keep_names = {"conf.d", "templates", "scripts"}
 
+        # M2：安装时落盘的模块配置值可能已是「宿主视角」绝对路径（DATA_DIR_HOST 下的
+        # 路径，见 routes/modules._expand_config_placeholders），而容器部署下 .env 里的
+        # DATA_DIR 是 /data——单靠 env_project/env_data 无法把宿主路径相对化，卸载勾选
+        # 「删除数据」会命不中真实目录（孤儿数据）。故额外用 *_HOST 根做一次映射：
+        # DATA_DIR_HOST 更具体（数据目录通常嵌在项目根之下）故优先匹配。
+        # 注意：不改写 env 本身，既有以 ${DATA_DIR}/${PROJECT_ROOT} 书写的模块解析
+        # 结果与改动前完全一致；宿主直跑模式（无 *_HOST 注入）host_roots 为空。
+        host_roots = []
+        for host_key, runtime_root in (("DATA_DIR_HOST", data_root), ("PROJECT_ROOT_HOST", project_root)):
+            raw = (os.environ.get(host_key) or "").strip().rstrip("/")
+            if not raw or raw == "/":
+                continue
+            try:
+                host_roots.append((Path(raw).expanduser().resolve(), runtime_root))
+            except OSError:
+                continue
+
         def _runtime_path(p: Path) -> Path:
             """将 .env 宿主路径映射为代码运行时的可见路径"""
+            for host_root, runtime_root in host_roots:
+                try:
+                    return (runtime_root / p.relative_to(host_root)).resolve()
+                except ValueError:
+                    continue
             try:
                 rel = p.relative_to(env_project)
                 return (project_root / rel).resolve()

@@ -33,7 +33,7 @@ config:
     label: "备份加密密码"
     type: password
     auto_generate: true
-    description: "restic 仓库加密密码，留空自动生成，请妥善保管"
+    description: "restic 仓库加密密码。⚠ 这是恢复备份的唯一凭据：restic 无后门，密码丢失即整库永久不可解密（本模块曾因此丢失 8.9G / 15 个快照）。留空自动生成 32 位随机串，生成后请立即离线保存。修改此值不会迁移已有仓库，旧仓库将立即变为不可读。"
 access:
   port: 0
   subdomain: ""
@@ -47,9 +47,17 @@ resources:
 docs:
   usage: |
     数据备份模块使用 restic 进行增量备份。
-    首次运行会自动初始化 restic 仓库并执行全量备份，后续为增量备份。
+    仓库路径：<DATA_DIR>/backups/restic-repo-v2（容器内 /backups/restic-repo-v2）。
+    旧仓库 <DATA_DIR>/backups/restic-repo 为加密密码丢失后不可解密的遗留存证，仅只读保留，不再使用。
+    仓库不存在时首次运行会自动初始化并执行全量备份，后续为增量备份。
+    启动时会先用只读的 restic snapshots 探测仓库可访问性：密码错误或仓库损坏时
+    只启动调度器、绝不触发任何写入，并把原因打印到容器日志；设 SKIP_INITIAL_BACKUP=1 可跳过启动时的首次备份。
     备份内容：所有服务数据（data/目录）和配置文件（.env）。
-    排除规则：jellyfin/cache、jellyfin/transcodes、*.log、临时文件。
+    .env 备份源为权威运行时文件 <DATA_DIR>/.env（容器内挂载为 /config/.env，只读），
+    与面板写入配置的目标文件同源；该文件缺失时备份会打印告警但不中断，数据仍照常备份。
+    排除规则：jellyfin/cache、jellyfin/transcodes、*.log、临时文件、backups（避免仓库自吞）。
+    保留策略：按 BACKUP_RETAIN_DAYS 清理过期快照，但保底留住最新 1 份 + 每月 1 份；
+    restic prune（永久删除数据、不可逆）默认关闭，需显式设 BACKUP_PRUNE_ENABLED=1 才执行。
   faq:
     - q: "首次备份需要多长时间？"
       a: "取决于数据量，7.8GB Jellyfin 数据首次约需 10-30 分钟（排除缓存后）。后续增量备份通常 1-5 分钟。"

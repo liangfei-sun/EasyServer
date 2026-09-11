@@ -33,7 +33,8 @@
               <template #header>
                 <div class="card-header">
                   <span class="mod-name">{{ mod.name }}</span>
-                  <el-tag v-if="mod.installed" type="success" size="small">已安装</el-tag>
+                  <el-tag v-if="isSystemModule(mod)" type="warning" size="small">系统组件</el-tag>
+                  <el-tag v-else-if="mod.installed" type="success" size="small">已安装</el-tag>
                   <el-tag v-else type="info" size="small">可安装</el-tag>
                 </div>
               </template>
@@ -46,8 +47,14 @@
                 <el-tag size="small" type="warning" v-for="dep in mod.depends_on" :key="dep">依赖: {{ dep }}</el-tag>
               </div>
               <div class="mod-actions" style="margin-top: 12px">
-                <el-button v-if="!mod.installed" type="primary" size="small" @click="installModule(mod)" :loading="installingId === mod.id">安装</el-button>
-                <el-button v-else type="danger" size="small" @click="uninstallModule(mod)">卸载</el-button>
+                <!-- 系统组件由网络配置流程自动管理，不经应用商店安装/卸载，隐藏操作按钮避免误点冲突 -->
+                <template v-if="isSystemModule(mod)">
+                  <span class="system-hint">由系统自动管理</span>
+                </template>
+                <template v-else>
+                  <el-button v-if="!mod.installed" type="primary" size="small" @click="installModule(mod)" :loading="installingId === mod.id">安装</el-button>
+                  <el-button v-else type="danger" size="small" @click="uninstallModule(mod)">卸载</el-button>
+                </template>
               </div>
             </el-card>
           </el-col>
@@ -133,6 +140,17 @@ import api from '../api'
 
 const { isMobile } = useMobile()
 
+// 系统级基础设施模块白名单：由网络配置流程（Nginx 反代 / ACME 证书 / Cloudflare Tunnel）
+// 自动创建和管理，始终随面板运行，用户不应从应用商店安装或卸载，否则会与已运行的容器冲突。
+// 判定依据说明：
+//   1) modules/*/module.yaml 未提供 system 之类标记字段（后端 /modules 也未注入）；
+//   2) registry 的 category=infra 分类同时包含 nginx/acme/cloudflare-tunnel（核心基础设施）与
+//      ddns-go/uptime-kuma/backup（用户可安装服务），故不能仅凭 category 判定；
+//   3) 因此采用最小侵入的模块 id 白名单，精准区分系统组件与可安装模块。
+// 白名单与后端 SYSTEM_MODULE_IDS 保持同源一致：nginx, acme, cloudflare-tunnel
+const SYSTEM_MODULE_IDS = ['nginx', 'acme', 'cloudflare-tunnel']
+const isSystemModule = (mod) => SYSTEM_MODULE_IDS.includes(mod.id)
+
 const modules = ref([])
 const activeCategory = ref('infra')
 const configVisible = ref(false)
@@ -181,7 +199,8 @@ const applyFilters = (mods) => {
   if (activeFilter.value === 'installed') {
     result = result.filter(m => m.installed)
   } else if (activeFilter.value === 'available') {
-    result = result.filter(m => !m.installed)
+    // 可安装：排除已安装与系统组件（系统组件由网络配置流程自动管理，不可手动安装）
+    result = result.filter(m => !m.installed && !isSystemModule(m))
   }
   return result
 }
@@ -379,4 +398,5 @@ onUnmounted(() => {
 .install-stage { display: flex; align-items: center; gap: 8px; color: #409EFF; font-size: 14px; }
 .error-detail { background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px; max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 .field-hint { font-size: 12px; color: #999; line-height: 1.4; margin-top: 4px; }
+.system-hint { font-size: 12px; color: #e6a23c; }
 </style>
