@@ -10,6 +10,7 @@ import logging
 from ..core.deps import get_config_manager, get_docker_manager, MODULES_DIR
 from ..core.background_tasks import trigger_dns_sync_background
 from ..core.nginx_utils import async_regenerate_nginx_config, ensure_self_signed_cert
+from ..core.ip_utils import invalidate_ipv6_cache
 from pathlib import Path
 from .config import _save_dns_credentials
 
@@ -174,6 +175,10 @@ async def configure_network(request: NetworkConfigRequest):
 
     # 4. 标记网络配置完成
     cm.mark_network_configured()
+
+    # 5. 失效 IPv6 探测缓存：access_mode 切换（尤其 ipv6_direct）可能改变容器
+    #    IPv6 出口，强制下次诊断/DNS 状态重新探测，避免沿用最长 300s 的陈旧结果
+    invalidate_ipv6_cache()
 
     resp = {
         "success": True,

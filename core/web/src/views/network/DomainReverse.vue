@@ -57,6 +57,9 @@
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
               <el-tag v-if="dnsSync.ipv4" type="success" size="small">IPv4: {{ dnsSync.ipv4 }}</el-tag>
               <el-tag v-if="dnsSync.ipv6" type="info" size="small">IPv6: {{ dnsSync.ipv6 }}</el-tag>
+              <el-tooltip v-if="!dnsSync.ipv6 && dnsSync.ipv6_error" :content="dnsSync.ipv6_error" placement="top">
+                <el-tag type="warning" size="small">IPv6 未就绪</el-tag>
+              </el-tooltip>
               <el-button size="small" type="success" @click="handleSyncDns" :loading="dnsSyncing">
                 立即同步 DNS 记录
               </el-button>
@@ -221,7 +224,7 @@ const props = defineProps({
   dnsConfigured: { type: Object, required: true },
   sslValid: { type: Boolean, default: false },
   sslExpiry: { type: String, default: '' },
-  dnsSync: { type: Object, default: () => ({ ipv4: '', ipv6: '' }) },
+  dnsSync: { type: Object, default: () => ({ ipv4: '', ipv6: '', ipv6_error: '' }) },
   dnsSyncResult: { type: Object, default: () => ({}) },
   tunnelStatus: { type: Object, required: true },
   tunnelLoading: { type: Boolean, default: false },

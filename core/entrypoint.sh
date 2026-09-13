@@ -54,6 +54,13 @@ mkdir -p "${DATA_DIR}/backups"
 log "数据目录已就绪: ${DATA_DIR}"
 
 # ---- 3. 创建 Docker 网络（幂等） ----
+# 设计说明：此处【有意不】给 easyserver-proxy 启用 IPv6（--ipv6 + 子网分配）：
+#   1) docker 网络的 IPv6 需守护进程层配置，变更需重启 daemon，会连带中断
+#      全部容器，对家庭服务器代价过大；
+#   2) 反代链路本身不需要容器持有 IPv6 地址（Nginx 仅转发 IPv4 入站流量）。
+# 副作用：core 容器内无 IPv6 路由，公网 IPv6 探测改为经 docker daemon 在
+# 【宿主网络命名空间】起一次性容器代理（docker run --rm --network host + curl -6），
+# 详见 core/api/core/ip_utils.py（host 命名空间代理探测）。
 if docker network inspect easyserver-proxy >/dev/null 2>&1; then
     log "Docker 网络 easyserver-proxy 已存在"
 else

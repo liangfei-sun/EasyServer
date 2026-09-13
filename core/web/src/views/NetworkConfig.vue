@@ -55,9 +55,15 @@
           </div>
           <div class="diag-item">
             <span class="diag-label">公网 IPv6</span>
-            <span class="diag-value" :class="{ 'text-warn': !diagnostics.public_ipv6 }">
-              {{ diagnostics.public_ipv6 || '未检测到' }}
+            <span v-if="diagnostics.public_ipv6" class="diag-value">
+              <el-tooltip :content="ipv6SourceTooltip" placement="top">
+                <span style="cursor:help;border-bottom:1px dashed #409eff">{{ diagnostics.public_ipv6 }}</span>
+              </el-tooltip>
             </span>
+            <span v-else-if="diagnostics.public_ipv6_error" class="diag-value text-warn">
+              探测失败: {{ diagnostics.public_ipv6_error }}
+            </span>
+            <span v-else class="diag-value text-warn">宿主无公网 IPv6</span>
           </div>
           <div class="diag-item">
             <span class="diag-label">HTTPS 端口</span>
@@ -360,13 +366,29 @@ const sslValid = ref(false)
 const sslExpiry = ref('')
 
 // ===== DNS 记录同步 =====
-const dnsSync = ref({ ipv4: '', ipv6: '' })
+const dnsSync = ref({ ipv4: '', ipv6: '', ipv6_error: '' })
 const dnsSyncResult = ref({})
+
+const ipv6SourceLabels = {
+  'host-namespace': '经宿主网络命名空间探测',
+  'container-direct': '容器内直连探测',
+  'cache': '缓存',
+  'none': '未取得'
+}
+const ipv6SourceTooltip = computed(() => {
+  const src = diagnostics.value?.public_ipv6_source
+  if (!src) return '来源未知'
+  return `探测方式: ${ipv6SourceLabels[src] || src}`
+})
 
 const loadDnsStatus = async () => {
   try {
     const { data } = await api.get('/dns/status')
-    dnsSync.value = { ipv4: data.public_ipv4 || '', ipv6: data.public_ipv6 || '' }
+    dnsSync.value = {
+      ipv4: data.public_ipv4 || '',
+      ipv6: data.public_ipv6 || '',
+      ipv6_error: data.ipv6_error || ''
+    }
   } catch { /* 忽略 */ }
 }
 

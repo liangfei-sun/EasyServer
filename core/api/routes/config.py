@@ -356,10 +356,18 @@ async def get_diagnostics():
     https_port = int(env.get("HTTPS_PORT") or config.get("https_port", 8443))
     access_mode = env.get("ACCESS_MODE") or config.get("access_mode", "domain")
 
-    # 公网 IP 检测
-    from ..core.ip_utils import get_public_ipv4, get_public_ipv6
-    ipv4 = get_public_ipv4()
-    ipv6 = get_public_ipv6()
+    # 公网 IP 检测（异步探测，IPv6 可能经 host 命名空间一次性容器代理，避免阻塞事件循环）
+    from ..core.ip_utils import aget_public_ips_detailed
+    ips = await aget_public_ips_detailed()
+    ipv4 = ips["ipv4"]
+    ipv6 = ips["ipv6"]
+    ipv4_error = ips.get("ipv4_error")   # B5：提取 ip_utils 已产出的 IPv4 失败原因（与 ipv6_error 对称）
+    ipv6_error = ips["ipv6_error"]
+    # public_ipv6_source: 'host-namespace' | 'container-direct' | 'cache' | 'none'
+    if ipv6 or ipv6_error:
+        ipv6_source = "cache" if ips["ipv6_from_cache"] else (ips["ipv6_source"] or "none")
+    else:
+        ipv6_source = "none"
 
     # SSL 检测
     ssl = await _check_ssl_status(domain)
@@ -368,8 +376,18 @@ async def get_diagnostics():
     warnings = []
     if not domain:
         warnings.append({"field": "domain", "message": "未配置域名"})
+    # B6：IPv4 告警拆分，失败不再静默（原 `if not ipv4 and not ipv6` 在 IPv6 有值时
+    # 会掩盖 IPv4 失败）。区分“探测失败”（ipv4_error 非空）与“未检测到”。
+    if not ipv4 and ipv4_error:
+        warnings.append({"field": "public_ipv4", "message": f"IPv4 探测失败：{ipv4_error}"})
+    elif not ipv4 and not ipv4_error:
+        warnings.append({"field": "public_ipv4", "message": "未检测到公网 IPv4"})
     if not ipv4 and not ipv6:
+        # 保留“两者皆空”合并兜底告警（向后兼容旧 field=public_ip 消费方）
         warnings.append({"field": "public_ip", "message": "未检测到公网 IP 地址"})
+    if not ipv6 and ipv6_error:
+        # 区分"探测失败"与"确无 IPv6"：error 为空表示宿主无公网 IPv6，属正常情况
+        warnings.append({"field": "public_ipv6", "message": f"IPv6 探测失败：{ipv6_error}"})
     if domain and access_mode in ("domain", "hybrid"):
         if not ssl.get("ssl_valid"):
             warnings.append({"field": "ssl", "message": f"域名 {domain} 的 SSL 证书未配置或已过期"})
@@ -377,7 +395,10 @@ async def get_diagnostics():
     return {
         "domain": domain,
         "public_ipv4": ipv4,
+        "public_ipv4_error": ipv4_error,   # B5：新增，与 public_ipv6_error 对称（成功为 None）
         "public_ipv6": ipv6,
+        "public_ipv6_source": ipv6_source,
+        "public_ipv6_error": ipv6_error,
         "https_port": https_port,
         "access_mode": access_mode,
         "ssl_valid": ssl.get("ssl_valid", False),

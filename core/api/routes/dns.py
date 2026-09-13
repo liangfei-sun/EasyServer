@@ -9,7 +9,7 @@ from ..core.config_manager import ConfigManager
 from ..core.module_loader import ModuleLoader
 from ..core.alidns_api import AliyunDNSClient, AliyunDNSAPIError
 from ..core.cloudflare_api import CloudflareClient, CloudflareAPIError
-from ..core.ip_utils import get_public_ips
+from ..core.ip_utils import aget_public_ips_detailed
 from ..core.deps import get_config_manager, get_module_loader
 from typing import Optional
 import logging
@@ -134,7 +134,8 @@ async def dns_status(domain: Optional[str] = Query(None, description="指定域�
     target_domain = domain or cm.get_primary_domain()
     domain_cfg = cm.get_domain_config(target_domain) if domain else {}
     provider = domain_cfg.get("dns_provider") or cfg.get("dns_provider", "aliyun")
-    ips = get_public_ips()
+    # 异步探测公网 IP（IPv6 可能经 host 命名空间一次性容器代理，避免阻塞事件循环）
+    ips = await aget_public_ips_detailed()
 
     # 凭证状态
     creds_configured = False
@@ -196,6 +197,7 @@ async def dns_status(domain: Optional[str] = Query(None, description="指定域�
         "public_ipv4": ips["ipv4"],
         "public_ipv6": ips["ipv6"],
         "record_types": ips["record_types"],
+        "ipv6_error": ips.get("ipv6_error"),
         "records": records_status,
     }
 
@@ -230,8 +232,8 @@ async def sync_dns(domain: Optional[str] = Query(None, description="指定域名
         if not token:
             raise HTTPException(status_code=400, detail="未配置 Cloudflare API Token，请在网络配置中填写")
 
-    # 探测公网 IP
-    ips = get_public_ips()
+    # 探测公网 IP（异步版，避免阻塞事件循环；_build_targets 的 AAAA 组装逻辑不变）
+    ips = await aget_public_ips_detailed()
     if not (ips["ipv4"] or ips["ipv6"]):
         raise HTTPException(status_code=400, detail="无法检测到服务器公网 IP，请检查网络连接")
 
